@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+.python-version.local
+
+# uv
+.uv-python/
+
+# Environment / secrets
+.env
+.env.*
+
+# Data: raw downloads, intermediate, processed artifacts, reports, caches
+data/raw/*
+!data/raw/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/reports/*
+!data/reports/.gitkeep
+
+# Hugging Face / dataset caches
+.cache/
+.hf_cache/
+huggingface/
+
+# Databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Model weights / checkpoints (future phases)
+*.safetensors
+*.bin
+*.gguf
+checkpoints/
+runs/
+outputs/
+wandb/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Test / build artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/

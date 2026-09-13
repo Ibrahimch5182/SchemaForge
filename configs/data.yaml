@@ -1,0 +1,26 @@
+# LocalSQL Phase 1 data-pipeline configuration.
+# All pipeline constants live here rather than scattered as magic numbers.
+
+seed: 42
+dialect: sqlite
+train_db_fraction: 0.90
+business_context_keep_probability: 0.50
+
+source:
+  # BIRD filtered training rows (question, evidence, SQL, db_id). No schema info.
+  dataset_repo_id: birdsql/bird23-train-filtered
+  dataset_repo_type: dataset
+  dataset_file: data/train-00000-of-00001.jsonl
+  column_meaning_file: train_column_meaning.json
+
+  # Official BIRD schema metadata (table/column/PK/FK). The full archive is
+  # ~8.9 GB (includes per-db SQLite files with real row data); we extract
+  # only train_tables.json via HTTP range requests instead of downloading it.
+  schema_archive_url: https://bird-bench.oss-cn-beijing.aliyuncs.com/train.zip
+  schema_archive_entry: train/train_tables.json
+
+paths:
+  raw_dir: data/raw
+  interim_dir: data/interim
+  processed_dir: data/processed
+  reports_dir: data/reports
