@@ -5,16 +5,21 @@ description = "LocalSQL: fine-tuned Text-to-SQL system (Phase 1 - data foundatio
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "datasets>=2.19",
     "huggingface-hub>=0.23",
     "pydantic>=2.7",
     "sqlglot>=25.0",
     "pyyaml>=6.0",
+    "fsspec>=2024.6",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+]
+eval = [
+    "func-timeout>=4.3.5",
+    "psycopg2-binary>=2.9.13",
+    "pymysql>=1.2.0",
 ]
 
 [build-system]
@@ -26,3 +31,6 @@ packages = ["src/localsql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Windows: the shared user temp dir can intermittently deny pytest's
+# numbered-tmpdir cleanup scan; keep tmp_path allocations project-local.
+addopts = "--basetemp=.pytest_tmp"

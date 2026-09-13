@@ -23,6 +23,21 @@ data/interim/*
 !data/interim/.gitkeep
 data/processed/*
 !data/processed/.gitkeep
+
+# Phase 2: BIRD Mini-Dev benchmark workspace (downloaded databases, vendored
+# evaluator, generated manifests/reports -- all reproducible via scripts)
+data/benchmarks/bird_mini_dev/raw/*
+!data/benchmarks/bird_mini_dev/raw/.gitkeep
+data/benchmarks/bird_mini_dev/databases/*
+!data/benchmarks/bird_mini_dev/databases/.gitkeep
+data/benchmarks/bird_mini_dev/generation/*
+!data/benchmarks/bird_mini_dev/generation/.gitkeep
+data/benchmarks/bird_mini_dev/grading/*
+!data/benchmarks/bird_mini_dev/grading/.gitkeep
+data/benchmarks/bird_mini_dev/reports/*
+!data/benchmarks/bird_mini_dev/reports/.gitkeep
+data/benchmarks/bird_mini_dev/third_party/*
+!data/benchmarks/bird_mini_dev/third_party/.gitkeep
 data/reports/*
 !data/reports/.gitkeep
 
@@ -53,6 +68,7 @@ Thumbs.db
 
 # Test / build artifacts
 .pytest_cache/
+.pytest_tmp/
 .mypy_cache/
 .ruff_cache/
 build/

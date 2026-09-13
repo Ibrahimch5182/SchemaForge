@@ -1,0 +1,100 @@
+# LocalSQL Phase 2 benchmark configuration: BIRD Mini-Dev (original 500, SQLite).
+# All benchmark constants live here rather than scattered across source files.
+
+benchmark_id: bird_mini_dev_500
+variant: original_500_select_only_sqlite
+dialect: sqlite
+expected_examples: 500
+expected_databases: 11
+
+# The upstream repo now also ships "Mini-Dev V2" / LiveSQLBench: 270 extra
+# CRUD instances across 18 new databases (live_sql_bench_sqlite/). LocalSQL
+# explicitly does NOT use that variant.
+excluded_variant:
+  name: bird_mini_dev_v2_livesqlbench
+  reason: >
+    Adds 270 CRUD (not SELECT-only) instances across 18 new end-user
+    databases. Not part of the locked original-500 SELECT-only benchmark.
+
+source:
+  questions:
+    # Supplies question / evidence / difficulty metadata only. Its `SQL`
+    # field is diagnostic-only (see `grading.canonical_gold_source` below)
+    # -- Phase 2A found 18/500 rows where it diverges from the archive's
+    # own gold.sql (2 corrected-SQL rows + a 16-row duplicated-question
+    # block in the archive's financial db slice). Never use it for grading.
+    repo_id: birdsql/bird_mini_dev
+    repo_type: dataset
+    hf_split: mini_dev_sqlite
+    file: data/mini_dev_sqlite-00000-of-00001.json
+
+  # The HF dataset repo does not include the 11 SQLite database files or the
+  # Spider-format schema file. Those come from the official archive, hosted
+  # on the same Alibaba OSS bucket as the Phase 1 BIRD train.zip. The archive
+  # is ~800MB total (includes MySQL/PostgreSQL-only assets we don't need);
+  # only dev_databases/, dev_tables.json, mini_dev_sqlite.json, and
+  # mini_dev_sqlite_gold.sql (~346MB compressed) are extracted via HTTP
+  # range requests, same technique as Phase 1's schema_loader.
+  archive:
+    url: https://bird-bench.oss-cn-beijing.aliyuncs.com/minidev.zip
+    root_prefix: minidev/MINIDEV/
+    entries:
+      schema: dev_tables.json
+      questions_cross_check: mini_dev_sqlite.json
+      gold_sql: mini_dev_sqlite_gold.sql
+      databases_dir: dev_databases/
+      # per-db: dev_databases/<db_id>/<db_id>.sqlite
+      # per-db: dev_databases/<db_id>/database_description/*.csv
+
+  official_evaluator:
+    repo: bird-bench/mini_dev
+    # Pinned commit, not a floating branch head.
+    revision: abd11b6db92a1c9f809b32f7564c7c71b34d67f0
+    files:
+      - evaluation/evaluation_ex.py
+      - evaluation/evaluation_f1.py
+      - evaluation/evaluation_ves.py
+      - evaluation/evaluation_utils.py
+    runtime_deps: [func_timeout, pymysql, psycopg2-binary]
+    note: >
+      evaluation_utils.py unconditionally imports psycopg2 and pymysql even
+      though LocalSQL only evaluates SQLite. Both are installed (in the
+      "eval" dependency group) purely so the unmodified upstream file can be
+      imported.
+
+# Canonical grading-truth policy (Phase 2A decision, do not change without
+# explicit instruction). GradingExample.sql is sourced ONLY from this file
+# -- the exact input the official evaluator scores against -- never from
+# the HF questions file.
+grading:
+  canonical_gold_source:
+    source: BIRD Mini-Dev official archive (minidev.zip)
+    file: mini_dev_sqlite_gold.sql
+  hf_sql_role: diagnostic_only
+
+metrics:
+  primary: execution_accuracy
+  secondary: soft_f1
+  # R-VES is hardware/timing sensitive; deferred until deployment hardware
+  # is fixed. Not used for model selection in this phase.
+  r_ves_deferred: true
+
+execution:
+  timeout_seconds: 30.0
+  num_cpus: 1
+  # Retained as-is -- not raised merely to chase a higher oracle score.
+  # Two gold queries on this canonical environment exceed it regardless of
+  # correctness (bird-mini-dev-sqlite-0340: >120s; -0393: ~83.5s), which
+  # caps the expected full-oracle-sanity ceiling at ~498/500 (99.6%) EX.
+  # These are retained in the 500-example denominator, not special-cased.
+  known_gold_timeout_examples: [bird-mini-dev-sqlite-0340, bird-mini-dev-sqlite-0393]
+  expected_oracle_ceiling_pct: 99.6
+
+paths:
+  root: data/benchmarks/bird_mini_dev
+  raw: data/benchmarks/bird_mini_dev/raw
+  databases: data/benchmarks/bird_mini_dev/databases
+  generation: data/benchmarks/bird_mini_dev/generation
+  grading: data/benchmarks/bird_mini_dev/grading
+  reports: data/benchmarks/bird_mini_dev/reports
+  third_party_evaluator: data/benchmarks/bird_mini_dev/third_party/mini_dev_eval

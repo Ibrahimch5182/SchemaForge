@@ -24,30 +24,37 @@ Production:   question --> schema introspection --> fine-tuned model
                 --> SQL safety validation --> read-only execution --> result
 ```
 
-See `docs/ARCHITECTURE.md` for the full plan and `docs/DATA_CONTRACT.md` for
-exactly what this phase built.
+See `docs/ARCHITECTURE.md` for the full plan, `docs/DATA_CONTRACT.md` for
+the training-data pipeline, and `docs/EVALUATION.md` for the benchmark.
 
-## Current phase: Phase 1 -- data foundation
+## Current phase: Phase 2 -- data foundation + external evaluation
 
-This repository currently implements **only** the reproducible
-training-data pipeline:
+This repository implements two things so far:
 
+**Phase 1 -- reproducible training-data pipeline**
 - Loads the real `birdsql/bird23-train-filtered` dataset (6,601 rows / 69
-  databases -- see `data/reports/bird_inspection_report.json` after running
-  the inspection script).
-- Sources official BIRD schema metadata (tables, columns, types, primary
-  keys, foreign keys) and merges in column descriptions.
-- Deterministically serializes each database schema into a compact text
-  form and builds the single canonical prompt/completion pair that every
-  later phase (training, evaluation, inference) will reuse.
-- Splits by `db_id` (90/10 by default) so validation measures
-  generalization to unseen schemas, with zero leakage enforced in code.
-- Applies deterministic, seedable dropout of BIRD's `evidence` field so the
-  model isn't trained to depend on oracle context a real user may not give.
+  databases).
+- Sources official BIRD schema metadata and merges in column descriptions.
+- Deterministically serializes each database schema and builds the single
+  canonical prompt/completion pair every later phase reuses.
+- Splits by `db_id` (90/10 by default), zero leakage enforced in code.
+- Deterministic, seedable dropout of BIRD's `evidence` field.
 - Validates every row explicitly -- nothing is silently dropped.
 
-No model training, inference, evaluation harness, or application code
-exists yet.
+**Phase 2 -- external BIRD Mini-Dev evaluation system**
+- Sets up the official, locked **original 500 SELECT-only SQLite** Mini-Dev
+  benchmark (11 databases) -- explicitly not the newer Mini-Dev V2 /
+  LiveSQLBench CRUD additions.
+- Builds a gold-free generation manifest (reusing the Phase 1 schema
+  serializer and prompt builder) and an isolated grading reference, joined
+  by stable `example_id`s -- gold SQL never appears in the generation-side
+  artifact (enforced in code and tested).
+- Integrates the unmodified, pinned-commit official EX and Soft-F1
+  evaluators; adds LocalSQL-only diagnostics (SQL parse rate, execution
+  success rate) that are never conflated with official correctness.
+- R-VES is deferred until deployment hardware is fixed.
+
+No model training, inference, or application code exists yet.
 
 ## Setup
 
@@ -55,16 +62,19 @@ Requires Python 3.11 and [`uv`](https://docs.astral.sh/uv/).
 
 ```powershell
 uv sync
+uv sync --group eval   # only needed to run the official BIRD evaluator
 ```
 
 ## Commands
 
 ```powershell
-# Inspect the real BIRD dataset (rerunnable; writes a JSON report)
+# Phase 1: inspect / prepare BIRD training data
 uv run python scripts/inspect_bird.py
-
-# Run the full data preparation pipeline
 uv run python scripts/prepare_bird.py
+
+# Phase 2: set up / evaluate against BIRD Mini-Dev
+uv run python scripts/setup_bird_minidev.py
+uv run python scripts/evaluate_bird_minidev.py --predictions path\to\predictions.jsonl
 
 # Run tests (no network required)
 uv run pytest -q
@@ -73,11 +83,16 @@ uv run pytest -q
 ## Project layout
 
 ```text
-configs/data.yaml        Pipeline constants (seed, split fraction, sources)
-src/localsql/data/       Typed models, loaders, serializer, prompt builder,
-                          splitter, validator
-scripts/                 inspect_bird.py, prepare_bird.py
-tests/                   Unit + fixture-based tests
-docs/                    ARCHITECTURE.md, DATA_CONTRACT.md
-data/                    raw/ interim/ processed/ reports/ (gitignored)
+configs/data.yaml         Phase 1 pipeline constants
+configs/benchmark.yaml    Phase 2 benchmark constants
+src/localsql/data/        Phase 1: typed models, loaders, serializer,
+                           prompt builder, splitter, validator
+src/localsql/benchmark/   Phase 2: Mini-Dev loader, manifest builder,
+                           prediction contract, diagnostics, official
+                           evaluator adapter, report assembly
+scripts/                  inspect_bird.py, prepare_bird.py,
+                           setup_bird_minidev.py, evaluate_bird_minidev.py
+tests/                    Unit + fixture-based tests
+docs/                     ARCHITECTURE.md, DATA_CONTRACT.md, EVALUATION.md
+data/                     raw/ processed/ benchmarks/ reports/ (gitignored)
 ```

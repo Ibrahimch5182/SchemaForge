@@ -1,8 +1,8 @@
 # LocalSQL Architecture (High Level)
 
 This document describes the intended end-to-end architecture across all
-phases. **Only Phase 1 (the data foundation) is implemented today.**
-Everything else below is a plan, not code.
+phases. **Only Phase 1 (data foundation) and Phase 2 (external evaluation)
+are implemented today.** Everything else below is a plan, not code.
 
 ## Offline ML pipeline (future phases)
 
@@ -18,8 +18,13 @@ BIRD (filtered train) --> prepare --> baseline eval --> QLoRA fine-tune --> eval
   `Qwen/Qwen3-4B-Instruct-2507` (or a smaller Qwen3-family fallback if
   compute requires it) using Hugging Face Transformers + TRL + PEFT +
   bitsandbytes, on the `train.jsonl` produced here.
-- **evaluate**: score against BIRD Mini-Dev, which is held out and never
-  used as training data.
+- **evaluate** (Phase 2, implemented up to the scoring boundary): score
+  future model predictions against BIRD Mini-Dev (original 500 SELECT-only
+  SQLite, official EX/Soft-F1 evaluator) via the gold-free generation
+  manifest / prediction / grading contracts. Mini-Dev is held out and never
+  used as training data. Model inference itself is not implemented -- this
+  phase only scores a prediction file someone else (or a later phase)
+  produces.
 - **quantize**: prepare the fine-tuned model for efficient local inference.
 
 ## Production application (future phases)
@@ -49,6 +54,18 @@ without needing an agent loop.
 - Deterministic database-level train/validation split and evidence dropout.
 - Explicit validation and rejection reporting -- no silent data loss.
 
-Implementation of the training loop, evaluation harness, application
+## What Phase 2 actually built
+
+- Reproducible setup of the locked BIRD Mini-Dev variant (original 500
+  SELECT-only SQLite examples, 11 databases) -- see `docs/EVALUATION.md`.
+- Gold-free generation manifest + isolated grading reference, reusing
+  Phase 1's schema serializer and prompt builder unmodified.
+- Canonical prediction contract with explicit validation (duplicates,
+  missing, unknown ids, `db_id` mismatch).
+- The unmodified, pinned-commit official EX/Soft-F1 evaluator, integrated
+  via a thin adapter; LocalSQL-only diagnostics (parse/execution) kept
+  clearly separate from official correctness. R-VES deferred.
+
+Implementation of the training loop, model inference, application
 backend/frontend, or any agent/RAG/orchestration layer is explicitly out of
 scope until a later phase is authorized.
