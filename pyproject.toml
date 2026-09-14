@@ -21,6 +21,12 @@ eval = [
     "psycopg2-binary>=2.9.13",
     "pymysql>=1.2.0",
 ]
+model = [
+    "torch>=2.4",
+    "transformers>=4.46",
+    "accelerate>=1.0",
+    "bitsandbytes>=0.44",
+]
 
 [build-system]
 requires = ["hatchling"]

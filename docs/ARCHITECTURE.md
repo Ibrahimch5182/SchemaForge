@@ -1,8 +1,10 @@
 # LocalSQL Architecture (High Level)
 
 This document describes the intended end-to-end architecture across all
-phases. **Only Phase 1 (data foundation) and Phase 2 (external evaluation)
-are implemented today.** Everything else below is a plan, not code.
+phases. **Phase 1 (data foundation) and Phase 2 (external evaluation) are
+complete. Phase 3 (baseline inference infrastructure) is implemented but
+the real GPU baseline run has not happened yet.** Everything else below is
+a plan, not code. See `PROJECT.md` for the full chronological journal.
 
 ## Offline ML pipeline (future phases)
 
@@ -12,8 +14,11 @@ BIRD (filtered train) --> prepare --> baseline eval --> QLoRA fine-tune --> eval
 
 - **prepare** (Phase 1, implemented): raw BIRD rows + official schema
   metadata -> canonical prompt/completion examples, split by `db_id`.
-- **baseline**: run an off-the-shelf instruct model against the canonical
-  prompt contract to establish a pre-fine-tuning reference point.
+- **baseline** (Phase 3, infrastructure implemented): run the untouched
+  `Qwen/Qwen3-4B-Instruct-2507` (4-bit NF4, matching the future QLoRA base
+  representation) against the canonical prompt contract to establish a
+  pre-fine-tuning reference point. The real GPU run happens on a
+  cloud/Kaggle CUDA machine, performed by the user -- not yet run.
 - **QLoRA fine-tune**: 4-bit QLoRA supervised fine-tuning of
   `Qwen/Qwen3-4B-Instruct-2507` (or a smaller Qwen3-family fallback if
   compute requires it) using Hugging Face Transformers + TRL + PEFT +
@@ -66,6 +71,20 @@ without needing an agent loop.
   via a thin adapter; LocalSQL-only diagnostics (parse/execution) kept
   clearly separate from official correctness. R-VES deferred.
 
-Implementation of the training loop, model inference, application
+## What Phase 3 actually built (infrastructure only -- no run yet)
+
+- One Qwen3-4B-Instruct-2507 4-bit NF4 backend (`src/localsql/model/`),
+  lazily importing torch/transformers/bitsandbytes so the rest of the
+  repository stays installable/testable without them.
+- A resumable, crash-safe runner (`scripts/run_baseline.py`) that consumes
+  only the Phase 2 gold-free generation manifest and writes predictions
+  conforming directly to the Phase 2 prediction contract.
+- Reuse (not replacement) of the Phase 1 canonical prompt, wrapped only by
+  Qwen's own chat template; deterministic decoding; whitespace-only output
+  normalization; full run provenance recording; a `--dry-run` mode and a
+  `--token-profile` mode.
+- See `docs/BASELINE.md` for the full rationale and workflow.
+
+Implementation of the training loop (QLoRA/TRL/PEFT), application
 backend/frontend, or any agent/RAG/orchestration layer is explicitly out of
 scope until a later phase is authorized.

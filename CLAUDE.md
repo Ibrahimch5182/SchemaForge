@@ -12,12 +12,14 @@ executable read-only SQL query. Target model: `Qwen/Qwen3-4B-Instruct-2507`
 
 ## Current phase
 
-**Phase 2 complete: training-data pipeline (Phase 1) + external BIRD
-Mini-Dev evaluation system (Phase 2).** No model training, no inference, no
-application code exists yet. Do not implement later phases unless
-explicitly asked.
+**Phase 3 IN PROGRESS: baseline-inference infrastructure implemented; the
+real GPU baseline run has not yet happened.** Phases 1 (training-data
+pipeline) and 2 (external BIRD Mini-Dev evaluation) are complete. No
+fine-tuning/training, no application code exists yet. See `PROJECT.md` for
+the full chronological engineering journal. Do not implement later phases
+unless explicitly asked.
 
-## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`)
+## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`)
 
 ```
 BIRD --> prepare --> baseline --> QLoRA --> evaluate --> quantize   (future)
@@ -48,17 +50,29 @@ User question --> schema introspection --> fine-tuned model
    without explicit user instruction.
 7. Do not add dependencies casually. Stays on lightweight data-engineering
    deps (`huggingface_hub`, `pydantic`, `sqlglot`, `pyyaml`, `fsspec`,
-   `pytest`), plus an optional `eval` group (`func_timeout`, `pymysql`,
-   `psycopg2-binary`) needed only to import the unmodified official BIRD
-   evaluator. No `torch`/`transformers`/`trl`/`peft`/`bitsandbytes` until a
-   training phase is authorized.
+   `pytest`) by default, plus two optional groups: `eval`
+   (`func_timeout`, `pymysql`, `psycopg2-binary` -- to import the official
+   BIRD evaluator) and `model` (`torch`, `transformers`, `accelerate`,
+   `bitsandbytes` -- Phase 3 baseline inference only, not installed on this
+   Windows machine; `localsql.model.*` uses lazy imports so it stays
+   importable without it). No `trl`/`peft`/LoRA until a training phase is
+   authorized.
 8. Do not implement future phases early (no FastAPI, no frontend, no
-   agents, no model download/training).
+   agents, no model download/training on this machine).
 9. The official BIRD Mini-Dev evaluator (`evaluation_ex.py`,
    `evaluation_f1.py`, `evaluation_utils.py`) is vendored unmodified at a
    pinned commit and imported directly, never copy-pasted/edited. If it
    can't run, report the precise blocker -- never substitute a custom metric
    and call it official EX/Soft-F1.
+10. Baseline model is locked: `Qwen/Qwen3-4B-Instruct-2507`, untouched
+    (no fine-tuning), 4-bit NF4 (matches the future QLoRA base
+    representation so the comparison isolates fine-tuning). Reuses the
+    Phase 1 canonical prompt as a single chat user message wrapped only by
+    Qwen's own chat template -- never a second Text-to-SQL prompt.
+    `predicted_sql` is `raw_completion.strip()` only, never repaired.
+    `scripts/run_baseline.py` reads only the Phase 2 gold-free generation
+    manifest -- never grading/gold files. The real GPU run happens on a
+    cloud/Kaggle CUDA machine, run by the user, not by Claude.
 
 ## Environment note
 
@@ -77,7 +91,8 @@ on this machine (Windows wheels available).
 ```powershell
 # Environment setup (Python 3.11 via uv)
 uv sync
-uv sync --group eval   # only needed to run the official BIRD evaluator
+uv sync --group eval    # only needed to run the official BIRD evaluator
+uv sync --group model   # only on a CUDA cloud machine, for the real baseline
 
 # Phase 1: inspect / prepare BIRD training data
 uv run python scripts/inspect_bird.py
@@ -88,18 +103,28 @@ uv run python scripts/setup_bird_minidev.py
 uv run python scripts/evaluate_bird_minidev.py --predictions path\to\predictions.jsonl
 uv run python scripts/evaluate_bird_minidev.py --oracle-sanity   # plumbing check, NOT a model result
 
+# Phase 3: baseline inference (dry-run works without CUDA/model deps)
+uv run python scripts/run_baseline.py --manifest data\benchmarks\bird_mini_dev\generation\manifest.jsonl --run-id qwen3-4b-base-nf4-smoke --dry-run --limit 5
+# Real run (cloud/Kaggle CUDA only): drop --dry-run/--limit
+
 # Tests (no network required -- uses committed synthetic/sample fixtures)
 uv run pytest -q
 ```
 
 ## Where decisions/docs live
 
+- `PROJECT.md` -- chronological engineering journal across all phases;
+  append new phases here rather than recreating it.
 - `docs/DATA_CONTRACT.md` -- Phase 1: raw sources, internal schema, prompt
   format, split methodology, generated artifacts.
 - `docs/EVALUATION.md` -- Phase 2: BIRD Mini-Dev variant, gold isolation,
   prediction contract, evaluator integration.
+- `docs/BASELINE.md` -- Phase 3: baseline model/runtime rationale, prompt
+  envelope, resume/provenance design, cloud workflow.
 - `docs/ARCHITECTURE.md` -- full future architecture (training/app not yet
   built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.
 - `configs/benchmark.yaml` -- Phase 2 benchmark constants (source revisions,
-  expected counts, metric config). Don't scatter magic numbers into Python.
+  expected counts, metric config).
+- `configs/model.yaml` -- Phase 3 baseline model/runtime/generation
+  constants. Don't scatter magic numbers into Python.

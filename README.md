@@ -25,11 +25,16 @@ Production:   question --> schema introspection --> fine-tuned model
 ```
 
 See `docs/ARCHITECTURE.md` for the full plan, `docs/DATA_CONTRACT.md` for
-the training-data pipeline, and `docs/EVALUATION.md` for the benchmark.
+the training-data pipeline, `docs/EVALUATION.md` for the benchmark, and
+`docs/BASELINE.md` for baseline inference. `PROJECT.md` is the full
+chronological engineering journal.
 
-## Current phase: Phase 2 -- data foundation + external evaluation
+## Current phase: Phase 3 IN PROGRESS -- baseline inference infrastructure
 
-This repository implements two things so far:
+Phases 1 and 2 are complete. Phase 3 (below) has implemented the baseline
+inference infrastructure; **the real GPU baseline run has not happened
+yet** -- that is a manual step the user performs on a cloud/Kaggle CUDA
+machine.
 
 **Phase 1 -- reproducible training-data pipeline**
 - Loads the real `birdsql/bird23-train-filtered` dataset (6,601 rows / 69
@@ -54,7 +59,20 @@ This repository implements two things so far:
   success rate) that are never conflated with official correctness.
 - R-VES is deferred until deployment hardware is fixed.
 
-No model training, inference, or application code exists yet.
+**Phase 3 -- baseline inference infrastructure (IN PROGRESS)**
+- Implements a single Qwen3-4B-Instruct-2507 (untouched, 4-bit NF4) backend
+  and a resumable runner that reads *only* the Phase 2 gold-free
+  generation manifest.
+- Reuses the Phase 1 canonical prompt verbatim as a single chat message,
+  wrapped only by Qwen's own chat template.
+- Deterministic decoding; raw completions preserved; `predicted_sql` is
+  whitespace-trimmed only, never repaired.
+- Full model/software/hardware provenance recorded per run; safe
+  crash-resume; `--dry-run` validates everything without CUDA/model deps.
+- **No fine-tuning. The real GPU baseline has not been run yet** -- that's
+  a manual step on a cloud/Kaggle CUDA machine (see `docs/BASELINE.md`).
+
+No fine-tuning, training, or application code exists yet.
 
 ## Setup
 
@@ -62,7 +80,8 @@ Requires Python 3.11 and [`uv`](https://docs.astral.sh/uv/).
 
 ```powershell
 uv sync
-uv sync --group eval   # only needed to run the official BIRD evaluator
+uv sync --group eval    # only needed to run the official BIRD evaluator
+uv sync --group model   # only on a CUDA cloud machine, for the real baseline
 ```
 
 ## Commands
@@ -76,6 +95,9 @@ uv run python scripts/prepare_bird.py
 uv run python scripts/setup_bird_minidev.py
 uv run python scripts/evaluate_bird_minidev.py --predictions path\to\predictions.jsonl
 
+# Phase 3: baseline inference (dry-run needs no GPU/model deps)
+uv run python scripts/run_baseline.py --manifest data\benchmarks\bird_mini_dev\generation\manifest.jsonl --run-id qwen3-4b-base-nf4-smoke --dry-run --limit 5
+
 # Run tests (no network required)
 uv run pytest -q
 ```
@@ -83,16 +105,22 @@ uv run pytest -q
 ## Project layout
 
 ```text
+PROJECT.md                Chronological engineering journal (all phases)
 configs/data.yaml         Phase 1 pipeline constants
 configs/benchmark.yaml    Phase 2 benchmark constants
+configs/model.yaml        Phase 3 baseline model/runtime constants
 src/localsql/data/        Phase 1: typed models, loaders, serializer,
                            prompt builder, splitter, validator
 src/localsql/benchmark/   Phase 2: Mini-Dev loader, manifest builder,
                            prediction contract, diagnostics, official
                            evaluator adapter, report assembly
+src/localsql/model/       Phase 3: model config, Qwen backend, generation
+                           envelope/orchestration, run artifacts/resume
 scripts/                  inspect_bird.py, prepare_bird.py,
-                           setup_bird_minidev.py, evaluate_bird_minidev.py
+                           setup_bird_minidev.py, evaluate_bird_minidev.py,
+                           run_baseline.py
 tests/                    Unit + fixture-based tests
-docs/                     ARCHITECTURE.md, DATA_CONTRACT.md, EVALUATION.md
-data/                     raw/ processed/ benchmarks/ reports/ (gitignored)
+docs/                     ARCHITECTURE.md, DATA_CONTRACT.md, EVALUATION.md,
+                           BASELINE.md
+data/                     raw/ processed/ benchmarks/ runs/ (gitignored)
 ```

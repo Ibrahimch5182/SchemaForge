@@ -41,6 +41,11 @@ data/benchmarks/bird_mini_dev/third_party/*
 data/reports/*
 !data/reports/.gitkeep
 
+# Phase 3: baseline inference run artifacts (generations, predictions,
+# summaries -- reproducible via scripts/run_baseline.py)
+data/runs/*
+!data/runs/.gitkeep
+
 # Hugging Face / dataset caches
 .cache/
 .hf_cache/
@@ -56,7 +61,7 @@ huggingface/
 *.bin
 *.gguf
 checkpoints/
-runs/
+/runs/
 outputs/
 wandb/
 
