@@ -10,6 +10,31 @@ from localsql.train.sft_data import (
 from tests.train.fixtures import FakeSftTokenizer, make_prepared_example
 
 
+def test_prefix_matches_true_for_well_behaved_chatml_tokenizer():
+    """FakeSftTokenizer models real ChatML behavior (add_generation_prompt
+    reuses the assistant role marker) -- prefix_matches must be True,
+    exactly as the real Qwen tokenizer was validated on Kaggle
+    (0/6,067 mismatches)."""
+    tokenizer = FakeSftTokenizer()
+    encoding = build_sft_encoding(tokenizer, "ex-0", "some schema and question", "SELECT 1")
+    assert encoding.prefix_matches is True
+
+
+def test_prefix_matches_false_when_boundary_disagrees():
+    """A pathological tokenizer where add_generation_prompt does NOT
+    produce a true prefix of the full sequence must be caught, not
+    silently trusted."""
+
+    class BadTokenizer:
+        def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True, **kwargs):
+            if add_generation_prompt:
+                return [1, 2, 3]  # prompt-only
+            return [9, 9, 9, 4, 5]  # full -- does NOT start with [1, 2, 3]
+
+    encoding = build_sft_encoding(BadTokenizer(), "ex-0", "prompt text", "completion text")
+    assert encoding.prefix_matches is False
+
+
 def test_prompt_tokens_are_masked():
     tokenizer = FakeSftTokenizer()
     encoding = build_sft_encoding(tokenizer, "ex-0", "some schema and question", "SELECT 1")

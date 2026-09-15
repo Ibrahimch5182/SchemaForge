@@ -82,6 +82,34 @@ def load_examples(cfg, repo_root: Path, limit: int | None):
     return examples, train_path
 
 
+def load_arbitrary_jsonl_for_profiling(path: Path, limit: int | None):
+    """Load ANY JSONL with `example_id`/`prompt`/`completion` fields for
+    `--token-profile` -- Phase 1's `train.jsonl`/`validation.jsonl`, or a
+    Phase 5A candidate file (`data/processed_phase5_candidate/*.jsonl`).
+    Unlike `load_examples`, this does not assume the strict
+    `PreparedTextToSQLExample` schema or filter by split -- it profiles
+    whatever rows are in the file, in file order.
+    """
+    if not path.exists():
+        print(f"BLOCKER: input file not found: {path}")
+        sys.exit(1)
+    from types import SimpleNamespace
+
+    examples = []
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            examples.append(
+                SimpleNamespace(example_id=row["example_id"], prompt=row["prompt"], completion=row["completion"])
+            )
+    if limit:
+        examples = examples[:limit]
+    return examples, path
+
+
 def run_dry_run(cfg, examples, run_dir: Path) -> None:
     print(f"Training examples parsed OK: {len(examples)} (all split == 'train', gold completion present).")
     empty_completions = sum(1 for e in examples if not e.completion.strip())
@@ -94,39 +122,93 @@ def run_dry_run(cfg, examples, run_dir: Path) -> None:
     print("Dry run OK -- no model loaded, no CUDA required.")
 
 
-def run_token_profile(cfg, examples, run_dir: Path) -> None:
+def write_longest_examples_manifest(
+    run_dir: Path, profile_name: str, example_ids: list[str], total_counts: list[float], top_n: int
+) -> Path:
+    """Deterministic manifest of the longest examples by real full-SFT
+    token count -- for a later, separate GPU memory certification run
+    (NOT performed here). Ties broken by `example_id` for determinism.
+    """
+    ranked = sorted(zip(example_ids, total_counts), key=lambda pair: (-pair[1], pair[0]))
+    manifest = {
+        "profile_name": profile_name,
+        "top_n": top_n,
+        "total_examples_considered": len(ranked),
+        "entries": [
+            {"rank": i + 1, "example_id": eid, "full_sft_token_count": count}
+            for i, (eid, count) in enumerate(ranked[:top_n])
+        ],
+    }
+    out_path = run_dir / f"{profile_name}_longest_examples.json"
+    out_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return out_path
+
+
+def run_token_profile(
+    cfg, examples, run_dir: Path, input_path: Path, profile_name: str, top_n_manifest: int = 50
+) -> None:
+    """Real-Qwen-tokenizer profiling of ANY prepared/candidate JSONL
+    (`input_path`, defaults to Phase 1's train.jsonl via `--input`).
+    Reports full-SFT and prompt-only distributions (count/min/median/p90/
+    p95/p99/max, counts >3584/>4096/>8192) AND asserts the real prompt/
+    full prefix boundary -- the same check Phase 4 validated at
+    0/6,067 mismatches -- flagging any example where it fails rather than
+    silently trusting the assumption.
+    """
     from localsql.train.qlora_backend import QLoraBackend
 
     backend = QLoraBackend(cfg)
     resolved_revision = backend.load_tokenizer_only()
-    print(f"Tokenizer loaded (revision {resolved_revision}). Profiling {len(examples)} real training examples ...")
+    print(f"Tokenizer loaded (revision {resolved_revision}). Profiling {len(examples)} examples from {input_path} ...")
 
     prompt_counts: list[float] = []
     total_counts: list[float] = []
+    example_ids: list[str] = []
+    prefix_mismatch_ids: list[str] = []
     for ex in examples:
         encoding = build_sft_encoding(backend._tokenizer, ex.example_id, ex.prompt, ex.completion, max_seq_length=None)
         prompt_counts.append(float(encoding.prompt_token_count))
         total_counts.append(float(encoding.total_token_count))
+        example_ids.append(ex.example_id)
+        if not encoding.prefix_matches:
+            prefix_mismatch_ids.append(ex.example_id)
 
-    warn = cfg.token_profile.warn_threshold
-    hard = cfg.token_profile.hard_limit
+    thresholds = (3584, cfg.token_profile.warn_threshold, cfg.token_profile.hard_limit)
+
+    def threshold_counts(values: list[float]) -> dict:
+        return {f">{t}": sum(1 for v in values if v > t) for t in thresholds}
+
     report = {
+        "input_file": str(input_path),
         "tokenizer_revision": resolved_revision,
         "example_count": len(examples),
         "prompt_only_token_stats": numeric_stats(prompt_counts),
-        "prompt_only_count_above_warn": sum(1 for c in prompt_counts if c > warn),
-        "prompt_only_count_above_hard": sum(1 for c in prompt_counts if c > hard),
+        "prompt_only_counts_over_threshold": threshold_counts(prompt_counts),
         "full_sft_sequence_token_stats": numeric_stats(total_counts),
-        "full_sft_sequence_count_above_warn": sum(1 for c in total_counts if c > warn),
-        "full_sft_sequence_count_above_hard": sum(1 for c in total_counts if c > hard),
+        "full_sft_sequence_counts_over_threshold": threshold_counts(total_counts),
+        "prefix_boundary_check": {
+            "description": (
+                "Verifies the full sequence's prefix equals the standalone prompt-only "
+                "encoding for every example -- the assumption completion-only masking "
+                "depends on. Phase 4 validated this at 0/6,067 mismatches."
+            ),
+            "mismatch_count": len(prefix_mismatch_ids),
+            "mismatch_example_ids": prefix_mismatch_ids[:50],  # cap -- see full report file if more
+        },
         "configured_max_seq_length": cfg.sequence.max_seq_length,
         "note": "max_seq_length was NOT auto-adjusted from this profile -- review before changing configs/train.yaml.",
     }
     run_dir.mkdir(parents=True, exist_ok=True)
-    profile_path = run_dir / "train_token_profile.json"
+    profile_path = run_dir / f"{profile_name}_token_profile.json"
     profile_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     print(f"\nWrote {profile_path}")
+    if prefix_mismatch_ids:
+        print(f"\nWARNING: {len(prefix_mismatch_ids)} example(s) failed the prefix-boundary check -- see report.")
+
+    manifest_path = write_longest_examples_manifest(run_dir, profile_name, example_ids, total_counts, top_n_manifest)
+    print(f"Wrote longest-examples certification manifest: {manifest_path}")
+    print("(For a later, separate GPU memory certification run -- NOT performed by this command.)")
 
 
 def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps: int, skip_verify: bool) -> None:
@@ -282,6 +364,19 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=10)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--token-profile", action="store_true")
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=None,
+        help="For --token-profile: any JSONL with example_id/prompt/completion fields "
+        "(e.g. data/processed_phase5_candidate/train.jsonl). Defaults to configs/train.yaml's train_file.",
+    )
+    parser.add_argument(
+        "--top-n-manifest",
+        type=int,
+        default=50,
+        help="For --token-profile: size of the longest-examples certification manifest.",
+    )
     parser.add_argument("--verify-adapter", action="store_true")
     parser.add_argument("--skip-verify", action="store_true", help="Skip the post-training adapter sanity check.")
     args = parser.parse_args()
@@ -294,6 +389,17 @@ def main() -> None:
         run_verify_adapter(cfg, run_dir)
         return
 
+    if args.token_profile:
+        if args.input:
+            examples, input_path = load_arbitrary_jsonl_for_profiling(args.input, args.max_train_examples)
+        else:
+            examples, input_path = load_examples(cfg, REPO_ROOT, args.max_train_examples)
+        if not examples:
+            print("BLOCKER: no examples to profile after applying --max-train-examples.")
+            sys.exit(1)
+        run_token_profile(cfg, examples, run_dir, input_path, profile_name=input_path.stem, top_n_manifest=args.top_n_manifest)
+        return
+
     examples, train_path = load_examples(cfg, REPO_ROOT, args.max_train_examples)
     if not examples:
         print("BLOCKER: no training examples after applying --max-train-examples.")
@@ -301,10 +407,6 @@ def main() -> None:
 
     if args.dry_run:
         run_dry_run(cfg, examples, run_dir)
-        return
-
-    if args.token_profile:
-        run_token_profile(cfg, examples, run_dir)
         return
 
     try:

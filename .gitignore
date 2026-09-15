@@ -24,6 +24,18 @@ data/interim/*
 data/processed/*
 !data/processed/.gitkeep
 
+# Phase 5A: derived context-budgeted dataset prototype (reproducible via
+# scripts/analyze_schema_context.py --write-derived; never the source of
+# truth -- data/processed/*.jsonl remains Phase 1's untouched original)
+data/processed_context_budgeted/*
+!data/processed_context_budgeted/.gitkeep
+
+# Phase 5A: candidate dataset (adaptive per-database compaction policy --
+# reproducible via scripts/build_phase5_candidate.py; never the source of
+# truth -- data/processed/*.jsonl remains Phase 1's untouched original)
+data/processed_phase5_candidate/*
+!data/processed_phase5_candidate/.gitkeep
+
 # Phase 2: BIRD Mini-Dev benchmark workspace (downloaded databases, vendored
 # evaluator, generated manifests/reports -- all reproducible via scripts)
 data/benchmarks/bird_mini_dev/raw/*

@@ -853,3 +853,419 @@ human decision on the context-length/schema strategy above -- informed by
 the real token profile and database-concentration data now recorded here,
 not by an unreviewed default. Only after that decision is made would
 full-length training (not a smoke test) begin.
+
+---
+
+## Phase 5A -- Training Context Policy Analysis
+
+**Status: IN PROGRESS -- analysis and deterministic preprocessing design
+complete; NO final Phase 5 training-context configuration has been chosen,
+and no training has occurred.**
+
+### Goal
+
+Before the canonical full QLoRA experiment, determine whether the
+8K-28K-token schema explosion discovered in Phase 4 (23% of training
+examples over 4096 tokens, concentrated in a handful of schema-heavy
+databases) can be solved by simply trimming verbose schema formatting --
+or whether an actual schema-selection mechanism is required -- without
+ever dropping an example, truncating gold SQL, or silently discarding a
+database.
+
+### Why This Analysis Was Necessary
+
+Phase 4 established that 4096 excludes ~23% of training examples and 8192
+still excludes ~9%, concentrated overwhelmingly in two databases
+(`works_cycles`, `hockey`). Jumping straight to "just raise
+`max_seq_length` to 28K" would be a real, expensive, hardware-constrained
+decision made without knowing *why* those sequences are so long. This
+phase answers that "why" with real measurements first.
+
+### Methodology Note: Local Token Estimates vs. Real Kaggle Numbers
+
+This analysis runs entirely offline on this Windows machine -- no model or
+tokenizer download, no CUDA, matching every prior phase's constraint.
+Token counts here are therefore **estimates**
+(`localsql.schema_context.token_estimate`): character count divided by a
+calibrated chars-per-token ratio (3.771), derived by comparing this
+repository's real canonical schema text against the REAL per-database
+median token counts already obtained on Kaggle in Phase 4 for the 8
+long-context databases with known numbers. Held-out validation against
+the real whole-training-set statistics (not used for calibration): predicted
+median 2,723 vs. real 2,506 (+8.7%), predicted min 511 vs. real 549
+(-6.9%), predicted max 28,054 vs. real 28,082 (-0.1%). Good enough to rank
+representations and estimate magnitudes; **not** a substitute for a real
+tokenizer run. `scripts/analyze_schema_context.py` is offline-only in this
+phase; a real-tokenizer confirmation run (mirroring Phase 3/4's
+`--token-profile` pattern) is a natural, cheap follow-up on Kaggle before
+finalizing any Phase 5 number.
+
+### A. Why the Long Prompts Are Large
+
+Inspected the official BIRD schema metadata directly for the 9 databases
+Phase 4 flagged: `works_cycles` has **65 tables / 455 columns**; `hockey`
+has **22 tables / 300 columns**. These are large, genuinely multi-table
+relational schemas (Microsoft's AdventureWorks-style Cycles sample DB and
+an NHL statistics DB), not a small schema wrapped in unusually verbose
+prose. 451 of `works_cycles`' 455 columns (99%) and 298 of `hockey`'s 300
+(99%) carry an AI-generated descriptive comment in the canonical
+serializer (Phase 1's `-- description` suffix), and those descriptions
+average several hundred characters each -- so a large fraction of the
+actual character budget is descriptive text, but the underlying *table and
+column count* is also just genuinely large. Both factors matter; neither
+alone explains the full picture.
+
+### B. Current vs. Compact-Schema Token Distributions
+
+Representation A = Phase 1's canonical serializer (identifiers + types +
+PK/FK + descriptions). Representation B = same identifiers, types, PK, FK
+-- descriptions removed, nothing else changed (`localsql.schema_context.
+compact_serializer`, a new module; Phase 1's canonical serializer itself
+is untouched).
+
+> **Correction (applied in the Phase 5A closeout that follows this
+> section):** an earlier version of this table showed `count > 4096 =
+> 1,626` and `count > 8192 = 652` for representation A and presented them
+> without a clear per-cell "(real)"/"(est.)" label, next to genuinely real
+> cells that *did* carry that label -- creating exactly the kind of
+> ambiguity this document otherwise tries hard to avoid. **Those two
+> numbers were never real**: they were this phase's own local
+> character-count estimator's output for representation A's threshold
+> counts, which -- unlike the min/median/max figures, whose estimate
+> tracked the real numbers to within roughly 1-9% -- diverges much more on
+> *threshold-crossing counts* specifically, because a handful of examples
+> sit close enough to the 4096/8192 boundary that a ~5-6% per-example
+> estimation error (the calibration's own stdev) is enough to move them
+> across the line in the estimate but not in reality. The real Phase 4
+> Kaggle numbers (`kaggle-phase4-evidence/runs/qlora-smoke-1/
+> train_token_profile.json`, tokenizer revision
+> `cdbee75f17c01a7cc42f958dc650907174af0554`) are **1,398** (full SFT) /
+> **1,397** (prompt-only) for `>4096`, and **539** for `>8192` (both
+> representations). The table below is corrected; every cell is now
+> explicitly labeled.
+
+Whole training set (6,067 examples, full SFT: prompt + completion):
+
+| | A (canonical) | B (compact) |
+|---|---|---|
+| min | 549 (real) | ~137 (est.) |
+| median | 2,506 (real) | ~485 (est.) |
+| p90 | 8,013.8 (real) | ~997 (est.) |
+| p95 | 27,927 (real) | ~3,625 (est.) |
+| p99 | 27,975 (real) | ~3,671 (est.) |
+| max | 28,082 (real) | ~3,745 (est.) |
+| count > 3584 | ~1,894 (est. -- not measured by Phase 4) | **383 (est.)** |
+| count > 4096 | **1,398 (real)** | **0 (est.)** |
+| count > 8192 | **539 (real)** | **0 (est.)** |
+
+Every cell above is now explicitly labeled "(real)" (exact Phase 4 Kaggle
+number) or "(est.)" (this phase's calibrated estimate -- see methodology
+note above). Representation B has no real-tokenizer numbers at all yet for
+any statistic; all of its cells are estimates pending a real Kaggle
+profiling run (`scripts/run_qlora_smoke.py --token-profile --input ...`,
+documented further down).
+
+### C. Per-Long-DB Before/After (schema-only text, calibrated estimate)
+
+| DB | tables/cols | A chars | B chars | reduction | A real median tok | B est. tok |
+|---|---|---|---|---|---|---|
+| works_cycles | 65/455 | 104,916 | 13,247 | 87.4% | 27,948 | ~3,513 |
+| hockey | 22/300 | 52,700 | 5,358 | 89.8% | 13,792 | ~1,421 |
+| professional_basketball | 9/157 | 33,713 | 3,256 | 90.3% | 8,021 | ~863 |
+| mondial_geo | 34/139 | 27,281 | 2,832 | 89.6% | 6,963 | ~751 |
+| synthea | 11/85 | 18,016 | 1,989 | 89.0% | 4,865 | ~527 |
+| world_development_indicators | 6/67 | 17,014 | 1,897 | 88.9% | (1 ex. >4096 under A) | ~503 |
+| donor | 4/71 | 17,073 | 1,925 | 88.7% | 4,676 | ~510 |
+| movie_3 | 16/89 | 15,447 | 2,064 | 86.6% | 4,314 | ~547 |
+| superstore | 6/61 | 15,022 | 1,451 | 90.3% | 4,246 | ~385 |
+
+Removing descriptions alone cuts schema text by **86.6%-90.3%** across
+every one of these 9 databases -- a remarkably consistent reduction,
+because nearly every column in each of them carries a description of
+similar verbosity.
+
+### D. Does Compact-Full-Schema Alone Solve the Issue?
+
+**Almost entirely, yes -- for the 4096 candidate, completely.** Under
+representation B, **zero** training examples exceed 4096 or 8192 tokens
+(estimated). Only `works_cycles` (383 examples, 100% of that DB) remains
+over a **3584** candidate -- every other previously-flagged database,
+including `hockey`, drops comfortably under 3584 on compact schema alone
+(`hockey`'s estimate: ~1,421 tokens, nowhere near any candidate ceiling).
+`works_cycles` remains a special case specifically because 65 tables/455
+columns of bare identifiers, types, and FK annotations is, by itself,
+already ~3,513 estimated tokens before a single word of the question is
+added -- description removal cannot shrink raw identifier/relationship
+information below what the schema actually contains.
+
+### E. Schema Budgeting Algorithm (Task 3) -- Used Only for `works_cycles`
+
+Implemented in `localsql.schema_context.relevance`, **inference-time-safe
+by construction**: `select_schema_within_budget(schema, question,
+business_context, budget, ...)` has no parameter for gold SQL, gold
+tables, or gold columns -- there is nothing to accidentally pass gold data
+into (verified by a test that inspects the function signature directly).
+
+1. Normalize every table/column identifier (snake_case and camelCase
+   aware: `CustomerID` and `customer_id` both normalize to
+   `{"customer", "id"}`) and the question + business-context text into
+   lowercase word-term sets.
+2. Score each table: +2.0 if every term of its name appears in the
+   question/context; otherwise partial credit for term overlap, plus a
+   smaller contribution for how many of its columns' terms also appear.
+   Pure function of (table, terms) -- no randomness, no hash-order
+   dependence.
+3. Visit tables in descending-score order (ties broken by original schema
+   position, never by hash) and greedily add each one **plus its full
+   foreign-key closure** (every table transitively reachable via FK
+   targets, to a fixed point) if the *whole* resulting schema still fits
+   the budget -- otherwise skip and keep trying lower-scored tables.
+4. Never partially includes a table (whole table or nothing -- no
+   identifier is ever cut mid-string).
+5. If literally nothing fits (a pathological tiny budget), falls back to
+   the single highest-scored table rather than ever returning an empty
+   schema.
+6. `length_fn` is pluggable (defaults to `len` for this offline analysis;
+   a real tokenizer-based counter can be substituted on Kaggle for exact
+   enforcement without changing the algorithm).
+
+Applied to all 383 `works_cycles` examples with a schema-only budget tuned
+to ~3,300 estimated tokens: **max estimated full-SFT length 3,512.6 -- all
+383 now fit under 3584, zero remain over.**
+
+### F. Gold SQL Coverage Diagnostic (Evaluation Only -- Never Fed Back)
+
+`localsql.schema_context.coverage` parses gold SQL via `sqlglot`
+(with join-aware column qualification where possible) **strictly after**
+selection, in a module `relevance.py` never imports, purely to measure how
+well the gold-free selector performed. Over all 383 budgeted
+`works_cycles` examples:
+
+- 383/383 (100%) gold SQL parseable -- 0 unparseable/ambiguous.
+- **Table recall: 98.59%** (99.01% at a slightly looser budget).
+- **Column recall: 97.78%** (whole-table granularity -- a column counts as
+  retained iff its owning table was retained, matching the selector's
+  all-or-nothing-per-table design).
+- **98.17% of examples retained every gold-referenced table**, and
+  therefore every gold-referenced column.
+
+A deterministic, embeddings-free, question-term-matching selector recovers
+the correct tables for the actual gold query in ~98% of `works_cycles`
+cases without ever seeing the gold query.
+
+### G. Validation-Split Results (Same Logic, Unchanged, Untuned)
+
+The exact same analysis applied to the 534-example / 7-DB held-out
+validation split (`authors`, `college_completion`, `craftbeer`,
+`image_and_language`, `legislator`, `movie`, `retail_complains`) -- **none
+of the rules were tuned using validation gold performance; validation was
+only ever *measured*, not fitted.**
+
+- Representation A (canonical): min 589 (est.), median 3,398 (est.), max
+  7,836 (est.); **173/534 (32.4%) exceed 4096** -- proportionally *worse*
+  than train's 23%, though still well under 8192.
+- Representation B (compact): min ~170, median ~469, max ~1,082
+  (estimated) -- **zero examples exceed 3584, 4096, or 8192.** No
+  budgeting needed for validation at either candidate; none of the 7
+  held-out databases are among the long-schema-concentration group.
+
+### H. Candidate 3584 vs. 4096 -- T4 Training-Budget Implications
+
+The real Phase 4 smoke evidence: a 200-example subset with full-SFT max
+3,593 tokens completed 20/20 steps at **peak GPU allocation 11,550.2 MB**
+of 14,911.7 MB total on a T4 (after resolving an allocator-fragmentation
+OOM via `PYTORCH_ALLOC_CONF=expandable_segments:True`, no hyperparameter
+change). That is one real data point near the 3584 candidate, not a
+controlled sweep of both candidates -- **peak memory at an actual 4096
+ceiling has not been measured on real hardware.**
+
+**This is explicitly a statement about the *training* sequence-length
+budget on the T4 hardware available right now -- it is NOT a statement
+about the eventual product's context capacity.** A production system
+serving real users is not restricted to whatever length this phase trains
+on; it can use a larger model, better hardware, or a smarter runtime
+context strategy (e.g. the very budgeter validated here) independent of
+what a T4 smoke test could afford. Conflating "what we can afford to train
+on a free/cheap T4 right now" with "what LocalSQL can ever serve" would be
+a methodological error this document deliberately avoids.
+
+With representation B: **4096 requires zero budgeting for any of the
+6,067 train or 534 validation examples** (cleanest, simplest option, but
+untested for T4 memory headroom at that exact length). **3584 requires
+budgeting only `works_cycles`** (383/6,067 = 6.3% of train, measured at
+~98% gold table/column recall) and has one real (if narrowly-scoped) T4
+memory data point near it.
+
+### I. Files Changed/Added
+
+New: `src/localsql/schema_context/{__init__,compact_serializer,
+token_estimate,relevance,coverage}.py`; `scripts/analyze_schema_context.py`;
+`tests/schema_context/{__init__,fixtures,test_compact_serializer,
+test_relevance,test_coverage,test_derived_dataset}.py`. Changed:
+`.gitignore` (new `data/processed_context_budgeted/` rule, same pattern as
+other derived-artifact directories). Generated (gitignored, reproducible):
+`data/reports/schema_context_{train,validation}_b{3584,4096}.json`,
+`data/processed_context_budgeted/{train,validation}.jsonl` +
+`*_provenance.json` (Task 7 derived-dataset prototype -- Phase 1's
+`data/processed/{train,validation}.jsonl` verified byte-unchanged: the
+provenance file's `original_file_sha256` matches the exact hash already
+recorded in Phase 4's `run_config.json`).
+
+### J. Tests
+
+`uv run pytest -q` -- **149 passed** (118 previous + 31 new), run once, all
+CPU/offline, no network/CUDA/model. Coverage: deterministic output (repeat
+calls produce identical selections), no-gold-parameter enforced by
+signature inspection, no completion/target mutation, no example dropping,
+PK/FK preservation, FK-closure correctness (including multi-hop chains),
+token-budget enforcement without partial-table truncation, never-empty
+fallback for pathological budgets, full-schema-under-budget left unchanged,
+train/validation db isolation preserved through the derived-dataset writer,
+and the gold-coverage diagnostic's parseable/unparseable/full-vs-partial-
+retention accounting.
+
+### K. Candidate Policy Finalization (Supersedes "Recommended... Not
+Automatically Adopted" Above)
+
+After reviewing the analysis above, the question-conditioned schema
+budgeter (section E) was **evaluated and explicitly NOT selected** for the
+candidate training dataset. Reasons: its own measured gold-table/column
+retention was 98.17%, not 100% (a real, if small, information-loss risk);
+compact full-schema alone already eliminates the 4096/8192 problem
+entirely; and introducing selection complexity is unjustified when a
+strictly simpler policy suffices. **The selector code
+(`localsql.schema_context.relevance`) remains in the repository as
+documented research tooling -- it is not deleted, and nothing about
+sections E/F above is retracted -- it is simply not the chosen policy.**
+
+**Selected candidate policy: adaptive per-database full-schema compaction**
+(`localsql.schema_context.db_policy`, `scripts/build_phase5_candidate.py`):
+
+1. **Train**: a database is compacted (compact full-schema serializer,
+   every table/column/PK/FK preserved, no question-conditioning, no gold
+   SQL) for ALL its examples if the REAL Phase 4 Kaggle tokenizer profile
+   showed at least one of its examples exceeding 4096 tokens. Every other
+   database is left completely unchanged from Phase 1's canonical
+   `data/processed/train.jsonl`.
+2. **Validation**: Phase 4 never profiled validation with the real
+   tokenizer, so the same per-database rule is applied using the local
+   character-count estimator's canonical (representation A) full-SFT
+   length only -- never gold correctness, never tuned against validation
+   accuracy.
+
+**Verified train counts** (computed directly from `data/processed/
+train.jsonl`'s real `db_id` field -- exact counting, no estimation
+involved): **9 databases / 1,502 examples compacted**, **53 databases /
+4,565 examples unchanged** -- confirms the counts given at the start of
+this task exactly. Compacted: `donor` (88), `hockey` (156), `mondial_geo`
+(211), `movie_3` (223), `professional_basketball` (113), `superstore`
+(82), `synthea` (141), `works_cycles` (383), `world_development_indicators`
+(105).
+
+**Verified validation counts** (local-estimate-based, per-database, every
+example in the flagged databases estimated over 4096 -- not a borderline
+mixed case): **2 databases / 173 examples compacted** (`college_completion`:
+45, `legislator`: 128), **5 databases / 361 examples unchanged**
+(`authors`, `craftbeer`, `image_and_language`, `movie`,
+`retail_complains`).
+
+**Candidate artifacts** (gitignored, reproducible via
+`scripts/build_phase5_candidate.py`): `data/processed_phase5_candidate/
+{train,validation}.jsonl` (6,067 / 534 rows respectively) and `policy.json`
+(full decision record + provenance). Original-file-unchanged verification:
+the script re-hashes `data/processed/{train,validation}.jsonl`
+immediately before and after writing candidate output, and the recorded
+`train_sha256` (`81c29e14e3b...`) matches, digit for digit, the hash
+already recorded independently in Phase 4's `run_config.json` -- proof the
+original was never touched, from two unrelated points in the project's
+history.
+
+**Structural preservation**: every compacted database's serialization is
+checked programmatically, per-table and per-column (not just "the schema
+text somewhere contains the identifier" -- scoped to that table's own
+block, since large schemas like `works_cycles` reuse column names like
+`id` across many tables), against the real BIRD schema metadata: every
+table present, every column present, every primary-key annotation present
+on the correct column's line, every foreign-key annotation present on the
+correct column's line. Passed for all 9 databases including
+`works_cycles`' 65 tables / 455 columns.
+
+**Gold/completion immutability**: the candidate builder asserts, for every
+one of the 6,601 combined train+validation examples, that `completion`
+is byte-identical to the original; for unchanged-policy examples, that
+`prompt` and `serialized_schema` are also byte-identical; that every
+`example_id` from the original appears exactly once in the candidate (no
+duplication, no loss); and that the `db_id` set is unchanged (train/
+validation isolation preserved). No function anywhere in this pipeline
+accepts gold SQL as an input to a decision.
+
+### L. Real-Tokenizer Kaggle Profiling (Generalized)
+
+`scripts/run_qlora_smoke.py --token-profile` now accepts `--input <path>`
+for ANY JSONL with `example_id`/`prompt`/`completion` fields -- Phase 1's
+`train.jsonl`/`validation.jsonl`, or the new
+`data/processed_phase5_candidate/{train,validation}.jsonl` -- not just the
+hardcoded training file. Reports full-SFT and prompt-only distributions
+(count/min/median/p90/p95/p99/max, counts `>3584`/`>4096`/`>8192`) with the
+real Qwen tokenizer, and **asserts the real prompt/full prefix boundary**
+per example (the same check Phase 4 validated at 0/6,067 mismatches) --
+flagging (not silently ignoring) any example where the assumption
+completion-only masking depends on fails to hold. This has NOT been run
+yet -- it requires the real tokenizer on Kaggle, which this phase does not
+download or run locally.
+
+```powershell
+uv sync --group model --group train
+uv run python scripts/run_qlora_smoke.py --run-id phase5-candidate-profile \
+  --input data/processed_phase5_candidate/train.jsonl --token-profile
+uv run python scripts/run_qlora_smoke.py --run-id phase5-candidate-profile \
+  --input data/processed_phase5_candidate/validation.jsonl --token-profile
+```
+
+### M. Longest-Example Certification Manifest Support
+
+The same `--token-profile` command now also writes a deterministic
+`<profile_name>_longest_examples.json` manifest -- the top N (default 50,
+`--top-n-manifest`) examples ranked by real full-SFT token count, ties
+broken by `example_id` -- for a **later, separate** GPU memory
+certification run against the actual longest candidate examples. **That
+certification run is not performed in this phase.**
+
+### Phase 5 Provisional Candidate Policy (Not Yet Final)
+
+**PROVISIONAL**: adaptive per-database full-schema compaction (section K)
++ candidate `max_seq_length = 4096`. **4096 is NOT final until:**
+
+1. The candidate dataset (`data/processed_phase5_candidate/*.jsonl`) is
+   profiled with the real resolved Qwen tokenizer (section L's command).
+2. That profiling shows **zero** candidate examples exceeding 4096 tokens
+   for real (this phase's local estimate says zero for train under
+   compact-for-flagged-DBs, but that is an estimate, not a real-tokenizer
+   confirmation).
+3. A longest-example T4 memory certification (section M's manifest, run
+   separately, not in this phase) succeeds.
+
+The 3584 candidate + question-conditioned selector analysis (sections
+D-H) remains documented as an **evaluated alternative**, not the selected
+candidate -- kept for the record, not deleted, not acted on further unless
+real-tokenizer evidence later shows the adaptive per-database policy at
+4096 is insufficient.
+
+**Hardware/wall-clock reality check**: Phase 4's real smoke throughput
+(200 examples, 20 steps, 3,098 seconds) extrapolates to roughly 4+ hours
+just to complete a single epoch's worth of *optimizer steps* over a subset
+this size on a single T4 -- full canonical training (6,067 examples,
+multiple epochs, much longer average sequence length even after
+compaction) is likely **wall-clock impractical on a single free/cheap T4**.
+Hardware scaling and/or a checkpoint/resume strategy for a longer,
+possibly interrupted run is therefore an explicit **Phase 5B decision**,
+not resolved here.
+
+### What Comes Next
+
+Run the real-tokenizer Kaggle profiling command (section L) against the
+candidate dataset, confirm zero real over-4096 examples, review the
+longest-example manifest, and perform a separate GPU memory certification
+run against those longest examples. Only after all three gates above are
+satisfied, and a hardware/checkpoint strategy is decided (Phase 5B), would
+full-length QLoRA training begin.

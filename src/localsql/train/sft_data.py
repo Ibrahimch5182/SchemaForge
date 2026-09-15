@@ -42,6 +42,7 @@ class SftEncoding:
     completion_token_count: int
     total_token_count: int
     exceeds_max_seq_length: bool
+    prefix_matches: bool
 
 
 def build_sft_encoding(
@@ -85,6 +86,13 @@ def build_sft_encoding(
 
     labels = [LABEL_IGNORE_INDEX] * prompt_len + list(full_ids[prompt_len:])
 
+    # Diagnostic: does the full sequence's prefix actually equal the
+    # standalone prompt-only encoding? True for ChatML-style templates
+    # (Qwen3's) -- Phase 4 validated this at 0/6,067 mismatches on the
+    # real tokenizer. `prompt_len` above assumes this holds; a False here
+    # on real data would mean the mask boundary is wrong for this example.
+    prefix_matches = list(full_ids[:prompt_len]) == list(prompt_ids[:prompt_len])
+
     return SftEncoding(
         example_id=example_id,
         input_ids=list(full_ids),
@@ -93,6 +101,7 @@ def build_sft_encoding(
         completion_token_count=max(total_len - prompt_len, 0),
         total_token_count=total_len,
         exceeds_max_seq_length=bool(max_seq_length) and total_len > max_seq_length,
+        prefix_matches=prefix_matches,
     )
 
 
@@ -114,4 +123,5 @@ def pad_sft_encoding(encoding: SftEncoding, max_seq_length: int, pad_token_id: i
         completion_token_count=encoding.completion_token_count,
         total_token_count=encoding.total_token_count,
         exceeds_max_seq_length=encoding.exceeds_max_seq_length,
+        prefix_matches=encoding.prefix_matches,
     )

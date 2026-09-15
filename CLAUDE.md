@@ -12,18 +12,30 @@ executable read-only SQL query. Target model: `Qwen/Qwen3-4B-Instruct-2507`
 
 ## Current phase
 
-**Phase 4 COMPLETE: real Kaggle QLoRA smoke test succeeded (20/20 steps,
-finite loss, adapter saved + reload-verified).** Phases 1 (training-data
-pipeline), 2 (external BIRD Mini-Dev evaluation), 3 (untuned baseline:
-real Kaggle run, official EX 43.6 / Soft-F1 47.6975), and 4 are complete.
-**The Phase 5 context-length/schema strategy is an explicit open decision
--- do not pick 4096, 8192, or anything else without reviewing the real
-token profile in `PROJECT.md` first.** No full training run and no
-application code exist yet. See `PROJECT.md` for the full chronological
+**Phase 5A IN PROGRESS: candidate training-context policy finalized, NOT
+yet confirmed with the real tokenizer.** Phases 1-4 are complete (Phase 4:
+real Kaggle QLoRA smoke test, 20/20 steps, adapter saved + reload-
+verified). **Selected candidate policy**: adaptive per-database full-
+schema compaction (`localsql.schema_context.db_policy`,
+`scripts/build_phase5_candidate.py`) -- 9/62 train DBs (1,502/6,067
+examples, real-Kaggle-data-derived) and 2/7 validation DBs (173/534,
+local-estimate-derived) get the compact serializer; everything else is
+byte-identical to Phase 1. The question-conditioned schema budgeter
+(98.17% gold retention, not 100%) was evaluated and explicitly NOT
+selected -- it remains in the repo as documented research tooling only.
+**Candidate `max_seq_length=4096` is provisional until a real-tokenizer
+Kaggle profile of the candidate dataset confirms zero over-4096 examples
+and a longest-example GPU memory certification succeeds -- see
+`PROJECT.md` (Phase 5A) before treating it as final.** A prior version of
+this document's token counts contained an uncorrected local-estimate
+number (1,626) presented ambiguously next to real numbers; the real
+Phase 4 figure is 1,398 -- see `PROJECT.md` for the full correction. No
+full training run and no application code exist yet. See `PROJECT.md` for
+the full chronological
 engineering journal. Do not implement later phases unless explicitly
 asked.
 
-## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`)
+## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`, `docs/CONTEXT_BUDGET.md`)
 
 ```
 BIRD --> prepare --> baseline --> QLoRA --> evaluate --> quantize   (future)
@@ -155,6 +167,8 @@ uv run pytest -q
   envelope, resume/provenance design, cloud workflow, real results.
 - `docs/TRAINING.md` -- Phase 4: QLoRA smoke-test rationale, SFT
   formatting, completion-only masking, token profiling, cloud workflow.
+- `docs/CONTEXT_BUDGET.md` -- Phase 5A: schema-context analysis, compact
+  serialization, deterministic budgeter, open decisions (not final).
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.
