@@ -20,6 +20,7 @@ One QLoRA backend only -- not a generic multi-model training framework.
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,8 @@ class LoadedTrainInfo:
     transformers_version: str
     peft_version: str
     bitsandbytes_version: str
+    accelerate_version: str
+    trl_version: str
     cuda_version: Optional[str]
     gpu_name: Optional[str]
     gpu_total_memory_mb: Optional[float]
@@ -91,10 +94,12 @@ class QLoraBackend:
         )
 
     def load_for_training(self) -> LoadedTrainInfo:
+        import accelerate
         import bitsandbytes
         import peft
         import torch
         import transformers
+        import trl
         from peft import LoraConfig as PeftLoraConfig, get_peft_model, prepare_model_for_kbit_training
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -161,17 +166,40 @@ class QLoraBackend:
             transformers_version=transformers.__version__,
             peft_version=peft.__version__,
             bitsandbytes_version=bitsandbytes.__version__,
+            accelerate_version=accelerate.__version__,
+            trl_version=trl.__version__,
             cuda_version=torch.version.cuda,
             gpu_name=torch.cuda.get_device_name(0),
             gpu_total_memory_mb=round(torch.cuda.get_device_properties(0).total_memory / (1024**2), 1),
         )
         return self.info
 
-    def train_smoke(self, encodings: list, output_dir: Path, max_steps: int) -> dict:
-        """Bounded-step smoke training over pre-masked `SftEncoding`
-        examples. Raises `NonFiniteLossError` on NaN/Inf loss; propagates
-        CUDA OOM (`torch.cuda.OutOfMemoryError` / RuntimeError) unmodified
-        -- both stop the run rather than continuing on a corrupted state.
+    def train_smoke(
+        self,
+        encodings: list,
+        output_dir: Path,
+        max_steps: int,
+        save_steps: int | None = None,
+        save_total_limit: int | None = None,
+        resume_from_checkpoint: str | None = None,
+    ) -> dict:
+        """Bounded-step training over pre-masked `SftEncoding` examples --
+        used for the Phase 4 smoke test, and (with checkpointing enabled)
+        Phase 5B's memory/throughput certification and stop/resume runs.
+
+        Checkpointing: `save_steps` enables HF `Trainer`'s own periodic
+        checkpoint saves under `output_dir/checkpoint-<step>` (full
+        resumable state -- model/adapter, optimizer, LR scheduler, RNG,
+        `trainer_state.json` with `global_step` -- NOT just the final
+        LoRA-only adapter export from `save_adapter()`). `save_total_limit`
+        caps how many checkpoints are kept. `resume_from_checkpoint`, if
+        given, is passed straight to `Trainer.train()` -- this is the
+        explicit resume source; nothing here ever auto-discovers or
+        auto-resumes from an arbitrary directory.
+
+        Raises `NonFiniteLossError` on NaN/Inf loss; propagates CUDA OOM
+        (`torch.cuda.OutOfMemoryError` / RuntimeError) unmodified -- both
+        stop the run rather than continuing on a corrupted state.
         """
         import torch
         from transformers import Trainer, TrainerCallback, TrainingArguments
@@ -226,7 +254,9 @@ class QLoraBackend:
             optim=cfg.optimization.optim,
             seed=cfg.optimization.seed,
             logging_steps=1,
-            save_strategy="no",
+            save_strategy="steps" if save_steps else "no",
+            save_steps=save_steps or 500,  # ignored when save_strategy="no"
+            save_total_limit=save_total_limit,
             report_to=[],
         )
 
@@ -238,8 +268,14 @@ class QLoraBackend:
             callbacks=[_LogCallback()],
         )
 
+        starting_global_step = 0
+        if resume_from_checkpoint:
+            state_path = Path(resume_from_checkpoint) / "trainer_state.json"
+            if state_path.exists():
+                starting_global_step = json.loads(state_path.read_text(encoding="utf-8")).get("global_step", 0)
+
         start = time.perf_counter()
-        train_result = trainer.train()
+        train_result = trainer.train(resume_from_checkpoint=resume_from_checkpoint)
         runtime_s = time.perf_counter() - start
 
         for entry in metrics_log:
@@ -250,8 +286,11 @@ class QLoraBackend:
         return {
             "runtime_seconds": round(runtime_s, 2),
             "global_step": trainer.state.global_step,
+            "starting_global_step": starting_global_step,
+            "resumed_from_checkpoint": resume_from_checkpoint,
             "metrics_log": metrics_log,
-            "peak_gpu_memory_mb": round(torch.cuda.max_memory_allocated() / (1024**2), 1),
+            "peak_gpu_memory_allocated_mb": round(torch.cuda.max_memory_allocated() / (1024**2), 1),
+            "peak_gpu_memory_reserved_mb": round(torch.cuda.max_memory_reserved() / (1024**2), 1),
             "train_result_metrics": dict(train_result.metrics) if train_result else {},
         }
 

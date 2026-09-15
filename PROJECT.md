@@ -1231,25 +1231,30 @@ broken by `example_id` -- for a **later, separate** GPU memory
 certification run against the actual longest candidate examples. **That
 certification run is not performed in this phase.**
 
-### Phase 5 Provisional Candidate Policy (Not Yet Final)
+### Phase 5 Candidate Policy -- max_seq_length = 4096 (Real-Tokenizer Confirmed)
 
-**PROVISIONAL**: adaptive per-database full-schema compaction (section K)
-+ candidate `max_seq_length = 4096`. **4096 is NOT final until:**
+Adaptive per-database full-schema compaction (section K) + candidate
+`max_seq_length = 4096`. As of Phase 5B, gate 1-2 below are **PASSED**
+with real Kaggle-tokenizer evidence (tokenizer revision
+`cdbee75f17c01a7cc42f958dc650907174af0554`); gate 3 (GPU memory
+certification) is a separate, not-yet-run empirical step -- see
+"Phase 5B" below.
 
-1. The candidate dataset (`data/processed_phase5_candidate/*.jsonl`) is
+1. The candidate dataset (`data/processed_phase5_candidate/*.jsonl`) was
    profiled with the real resolved Qwen tokenizer (section L's command).
-2. That profiling shows **zero** candidate examples exceeding 4096 tokens
-   for real (this phase's local estimate says zero for train under
-   compact-for-flagged-DBs, but that is an estimate, not a real-tokenizer
-   confirmation).
-3. A longest-example T4 memory certification (section M's manifest, run
-   separately, not in this phase) succeeds.
+   **PASSED.**
+2. That profiling showed **zero** candidate examples exceeding 4096
+   tokens for real: TRAIN (6,067 examples) full-SFT max = 4,005 tokens,
+   `>3584` = 331, `>4096` = 0, `>8192` = 0, prefix mismatches = 0.
+   VALIDATION (534 examples) full-SFT max = 3,581 tokens, `>3584` = 0,
+   `>4096` = 0, `>8192` = 0, prefix mismatches = 0. **PASSED** -- real,
+   not estimated.
+3. A longest-example T4 memory certification (section M's manifest) --
+   **NOT YET RUN**. See "Phase 5B" below.
 
 The 3584 candidate + question-conditioned selector analysis (sections
 D-H) remains documented as an **evaluated alternative**, not the selected
-candidate -- kept for the record, not deleted, not acted on further unless
-real-tokenizer evidence later shows the adaptive per-database policy at
-4096 is insufficient.
+candidate -- kept for the record, not deleted, not acted on further.
 
 **Hardware/wall-clock reality check**: Phase 4's real smoke throughput
 (200 examples, 20 steps, 3,098 seconds) extrapolates to roughly 4+ hours
@@ -1257,15 +1262,245 @@ just to complete a single epoch's worth of *optimizer steps* over a subset
 this size on a single T4 -- full canonical training (6,067 examples,
 multiple epochs, much longer average sequence length even after
 compaction) is likely **wall-clock impractical on a single free/cheap T4**.
-Hardware scaling and/or a checkpoint/resume strategy for a longer,
-possibly interrupted run is therefore an explicit **Phase 5B decision**,
-not resolved here.
+A representative-sample throughput measurement (Phase 5B, not yet run)
+will replace this extrapolation with a real estimate before any hardware
+decision is made.
+
+## Phase 5B -- GPU Certification, Throughput Benchmark, and Crash-Safe
+Resume Infrastructure (IN PROGRESS)
+
+### Goal
+
+Build the minimum infrastructure to answer, empirically and before any
+full canonical training run: (1) can the longest real candidate examples
+(~4,005 tokens) train safely on one T4 under the exact intended QLoRA
+config, (2) what is a realistic full-training wall-clock estimate from a
+representative throughput sample, and (3) can training be stopped and
+resumed from a checkpoint without restarting. **No full canonical
+training, no BIRD Mini-Dev evaluation, and no Phase 6 work occur in this
+phase.**
+
+### Certification Gate Status
+
+- **A. Real tokenizer context certification -- PASSED.** See numbers
+  above; sourced from `kaggle-phase5-tokenizer-evidence/` (read-only,
+  unmodified).
+- **B. GPU memory certification -- NOT YET RUN.** Requires a real Kaggle
+  T4 GPU. Command below.
+- **C. Throughput certification -- NOT YET RUN.** Requires a real Kaggle
+  T4 GPU. Command below.
+- **D. Stop/resume certification -- NOT YET RUN.** Requires two separate
+  Kaggle process invocations (RUN A, RUN B). Commands below.
+- **E. Canonical full training -- NOT STARTED.** Blocked on B-D above
+  and an explicit hardware/session-strategy decision.
+
+No GPU certification success is claimed here until Kaggle actually
+produces it -- this section records infrastructure only.
+
+### Reliability Correction Pass (superseding the initial Phase 5B build)
+
+The initial Phase 5B implementation below was accepted except for two
+issues corrected before commit:
+
+1. **Estimator-based throughput sampling was replaced.** The original
+   `throughput_sample_64` used 8 real long-tail examples plus examples
+   ranked by the local character-count estimator
+   (`localsql.schema_context.token_estimate`). This is **not accepted**
+   for the canonical benchmark -- the estimator has known material
+   threshold-count error versus the real Qwen tokenizer, and the
+   throughput benchmark drives a hardware/runtime decision. It is
+   replaced by a **real-token-manifest-only** pipeline: `--token-profile`
+   now also writes a per-example real token-length manifest
+   (`<profile>_token_lengths.jsonl` -- `example_id`, `db_id`,
+   `representation`, `prompt_only_token_count`, `full_sft_token_count`,
+   `completion_token_count`, `prefix_boundary_match`, all from the same
+   resolved-tokenizer/chat-template path already used for the approved
+   Phase 5B profile), and the canonical throughput sample is now 64
+   deterministic, approximately-equally-spaced ranks (round-half-up rule)
+   over ALL profiled examples sorted by `(full_sft_token_count,
+   example_id)` -- no estimator, no gold SQL, no random sampling, no
+   hand-picked substitutions. A representation gap in the selected sample
+   is a **BLOCKER** (`ThroughputSampleRepresentationError`), never
+   silently patched. The stale estimator-built `throughput_sample_64.*`
+   files were deleted; regenerating them now requires the real manifest
+   (see "Exact Kaggle Commands" below) -- `build_certification_sets.py`
+   BLOCKERs with the exact next command if it's missing.
+2. **Durable checkpoint export was hardened to fail closed.**
+   `validate_checkpoint_completeness` now requires every HF Trainer/PEFT
+   resumable-state category -- model/LoRA adapter state, optimizer state,
+   LR scheduler state, `trainer_state`/global step, RNG state, training
+   arguments -- to actually be present (tolerating filename variants like
+   `adapter_model.safetensors`/`.bin`, `optimizer.pt`/`.bin`) before
+   `build_export` creates ANY export directory; a missing category raises
+   `IncompleteCheckpointError` and writes nothing. The export also now
+   packages the **exact training-data JSONL** a run used
+   (`training_data.jsonl`, byte-for-byte, SHA256-verified against
+   `run_config.json`'s `train_file_sha256` via
+   `verify_training_data_snapshot` -- `TrainingDataMismatchError`,
+   fail-closed, on any mismatch), plus environment/source provenance
+   (Python/torch/transformers/peft/bitsandbytes/accelerate/trl versions,
+   CUDA/GPU info, resolved model/tokenizer revision, and a source-code
+   revision resolved via `localsql.train.provenance.resolve_source_revision`
+   -- explicit `--source-revision` > a `SOURCE_REVISION` file at the repo
+   root > best-effort `git rev-parse HEAD` -- since `git archive`/Kaggle
+   upload strips `.git` and would otherwise silently lose the commit).
+
+### What Was Built
+
+1. **Longest-16 certification set** (`scripts/build_certification_sets.py`,
+   `src/localsql/train/certification.py`): exact copies of the 16
+   real-tokenizer-longest candidate training examples (per the Kaggle
+   `train_longest_examples.json` manifest, rank order already
+   deterministic), for worst-case memory certification. Real length range:
+   3,939.0-4,005.0 tokens. No re-ranking, no mutation, no truncation.
+   SHA256-tracked against both the source candidate file and the source
+   manifest. Methodology unchanged by the reliability correction.
+2. **Real per-example token-length manifest + canonical throughput
+   sample** (`--token-profile`'s `write_token_length_manifest`,
+   `localsql.train.certification.build_real_token_throughput_sample`/
+   `select_equally_spaced_by_real_rank`): see "Reliability Correction
+   Pass" above. Not yet regenerated against the real candidate-dataset
+   manifest -- that Kaggle run has not happened yet (see "What Comes
+   Next").
+3. **Checkpointing** (`src/localsql/train/qlora_backend.py`,
+   `scripts/run_qlora_smoke.py`): `Trainer`'s own full-state periodic
+   checkpointing (`save_steps`/`save_total_limit`), exposed as explicit
+   CLI flags, plus explicit (never auto-discovered) `--resume-from-checkpoint`.
+   `run_config.json`/`summary.json` record `checkpoint_dir`, `save_steps`,
+   `save_total_limit`, `resume_from_checkpoint`, `starting_global_step`,
+   the final `global_step`, and (reliability correction) `source_revision`/
+   `source_revision_origin` and `accelerate_version`/`trl_version` in
+   `summary.json`'s provenance block, so a resume/export is always
+   independently verifiable from the run artifacts alone.
+4. **Durable checkpoint export, now fail-closed**
+   (`scripts/export_checkpoint.py`,
+   `src/localsql/train/checkpoint_export.py`): see "Reliability
+   Correction Pass" above -- validates checkpoint completeness and
+   packages the exact training-data snapshot + full provenance before
+   writing anything, still explicitly excluding full base-model weights
+   (allow-list + size-cap safety net).
+
+### Exact Kaggle Commands (not yet executed)
+
+GPU memory certification (16 longest examples, exact intended config;
+`configs/train.yaml` already carries batch=1/grad-accum=8/LoRA
+r16-alpha32-dropout0.05/max_seq_length=4096/gradient checkpointing):
+
+```
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+uv run python scripts/run_qlora_smoke.py --run-id phase5b-mem-cert \
+    --input data/certification/longest_16.jsonl --max-steps 2
+```
+
+(16 examples, batch 1, grad-accum 8 -> 16 microbatches / 2 optimizer
+steps, matching the task's expectation.)
+
+Throughput benchmark -- now a TWO-STEP process (reliability correction):
+first produce the real per-example token-length manifest, then build the
+canonical sample from it, then run the sample:
+
+```
+# Step 1: real per-example token-length manifest over the full candidate
+# training set (writes data/runs/phase5-candidate-profile/train_token_lengths.jsonl;
+# CPU-only for the manifest math, but needs the real tokenizer -- run
+# alongside the model/train groups on Kaggle).
+uv run python scripts/run_qlora_smoke.py --run-id phase5-candidate-profile \
+    --input data/processed_phase5_candidate/train.jsonl --token-profile
+
+# Step 2 (offline, no CUDA needed -- copy train_token_lengths.jsonl to
+# kaggle-phase5-tokenizer-evidence/phase5-candidate-train-profile/ first,
+# or pass --token-lengths-manifest pointing at it directly):
+uv run python scripts/build_certification_sets.py
+
+# Step 3: the actual throughput benchmark run.
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+uv run python scripts/run_qlora_smoke.py --run-id phase5b-throughput \
+    --input data/certification/throughput_sample_64.jsonl --max-steps 8 \
+    --save-steps 4 --save-total-limit 1
+```
+
+Stop/resume certification -- two SEPARATE process invocations, two
+distinct `--run-id`s (this runner refuses to overwrite a run-id that
+already has a `summary.json`, so RUN B must be a new run-id resuming from
+RUN A's checkpoint, not the same run-id):
+
+```
+# RUN A -- train to a known step, save a checkpoint, exit.
+uv run python scripts/run_qlora_smoke.py --run-id phase5b-resume-a \
+    --input data/certification/longest_16.jsonl --max-steps 2 \
+    --save-steps 1 --save-total-limit 2
+
+# RUN B -- a NEW process, explicit resume from RUN A's checkpoint,
+# continuing to a HIGHER global_step.
+uv run python scripts/run_qlora_smoke.py --run-id phase5b-resume-b \
+    --input data/certification/longest_16.jsonl --max-steps 4 \
+    --save-steps 1 --save-total-limit 2 \
+    --resume-from-checkpoint data/runs/phase5b-resume-a/checkpoint/checkpoint-2
+```
+
+Verification (from RUN B's `summary.json`): `starting_global_step > 0`,
+final `global_step > starting_global_step`, `resumed_from_checkpoint`
+records RUN A's checkpoint path, and `adapter_verification` shows a valid
+reloaded adapter -- proving optimizer/scheduler/model state was actually
+restored, not re-trained from scratch inside one continuous process.
+
+Durable export, after any of the above:
+
+```
+uv run python scripts/export_checkpoint.py --run-id phase5b-resume-b
+```
+
+### Full-Run Session Safety Design (Documentation Only -- Not Executed)
+
+This is a design for later multi-session Kaggle training, not something
+run in this phase:
+
+- Keep each Kaggle session comfortably below the platform's max session
+  length (leave real margin, not just under the hard cap), so a session
+  ends on a deliberate checkpoint/export rather than a forced kill
+  mid-step.
+- Checkpoint frequently (`--save-steps` set to a cadence measured in
+  minutes, not epochs, once Phase 5B's throughput numbers are real) so
+  the worst-case lost work from an unplanned interruption is small.
+- Before a planned session end, run `scripts/export_checkpoint.py` to
+  produce a durable, portable package -- never rely on
+  `/kaggle/working` (or any single ephemeral VM path) surviving past the
+  session.
+- The next session resumes explicitly from that exported checkpoint
+  (`--resume-from-checkpoint`, a new `--run-id`) -- never an implicit or
+  auto-discovered resume.
+- If a weekly compute quota is exhausted mid-training, preserve the
+  latest durable export and wait for quota renewal, or move to different
+  already-available compute -- **not** a workaround for the quota itself
+  (e.g. rotating accounts). This project uses one Kaggle account's
+  legitimate free GPU quota only.
+- No final hardware choice is made here -- that decision comes only after
+  Phase 5B's real throughput measurement (gate C above) is in hand.
+
+### Tests
+
+CPU/offline only (no CUDA, no model download):
+`tests/train/test_certification.py`,
+`tests/train/test_checkpoint_export.py`,
+`tests/train/test_provenance.py`, plus new cases in
+`tests/train/test_runner_contracts.py`. Cover deterministic
+longest-16/real-token-manifest throughput-sample selection (including the
+round-half-up rank formula, exactly-64-unique on a 6,067-scale fixture,
+representation-gap fail-closed behavior, and no estimator dependency),
+byte-identical record copies, checkpoint CLI/config wiring, explicit
+(never auto-discovered) resume path, run metadata capturing the parent
+checkpoint, source-revision resolution priority, and the durable export's
+required-state validation (one rejection test per missing category),
+training-data-snapshot verification, and manifest/provenance/allowlist/
+exclusion logic. Full suite (248 tests): `uv run pytest -q`.
 
 ### What Comes Next
 
-Run the real-tokenizer Kaggle profiling command (section L) against the
-candidate dataset, confirm zero real over-4096 examples, review the
-longest-example manifest, and perform a separate GPU memory certification
-run against those longest examples. Only after all three gates above are
-satisfied, and a hardware/checkpoint strategy is decided (Phase 5B), would
-full-length QLoRA training begin.
+Run the real-tokenizer profiling command against the full candidate
+training set (produces the real per-example token-length manifest this
+correction pass requires), rebuild the canonical throughput sample from
+it, then run the three Kaggle commands above (B, C, D) on real T4
+hardware, review the real memory/throughput/resume evidence, and only
+then decide hardware scaling and a full-training session strategy. Full
+canonical training and Phase 6 remain explicitly out of scope until that
+decision is made.

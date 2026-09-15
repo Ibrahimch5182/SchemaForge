@@ -1,9 +1,14 @@
-# LocalSQL Training Context Policy (Phase 5A)
+# LocalSQL Training Context Policy (Phase 5A/5B)
 
-**Status: IN PROGRESS.** This document records analysis and a candidate
-preprocessing policy -- it does **not** finalize `max_seq_length` for
-Phase 5 training. No training has occurred. BIRD Mini-Dev generation/
-evaluation is untouched.
+**Status: Phase 5B IN PROGRESS.** This document records the Phase 5A
+analysis and candidate preprocessing policy. As of Phase 5B,
+`max_seq_length=4096` for the candidate (compacted) dataset is
+**real-tokenizer-confirmed** (zero over-4096 examples across all 6,067
+train / 534 validation candidate examples, tokenizer revision
+`cdbee75f17c01a7cc42f958dc650907174af0554`) -- see `PROJECT.md` (Phase
+5B) for the exact numbers and for the still-outstanding GPU memory/
+throughput/resume certification gates. No full training has occurred.
+BIRD Mini-Dev generation/evaluation is untouched.
 
 ## Correction
 
@@ -105,15 +110,20 @@ GPU memory certification -- neither performed in this phase).
 # Build the candidate dataset (offline, no model/CUDA)
 uv run python scripts/build_phase5_candidate.py
 
-# Real-tokenizer profiling of the candidate (Kaggle only -- not run in this phase)
+# Real-tokenizer profiling of the candidate (Kaggle -- already run; see PROJECT.md Phase 5B)
 uv sync --group model --group train
 uv run python scripts/run_qlora_smoke.py --run-id phase5-candidate-profile \
   --input data/processed_phase5_candidate/train.jsonl --token-profile
 
 # Evaluated-but-not-selected alternative (question-conditioned selector), kept for the record
 uv run python scripts/analyze_schema_context.py --split train --budget-tokens 3584 --write-derived
+
+# Phase 5B: build the GPU/throughput certification sets from the candidate
+# + the real longest-examples manifest above (offline, no model/CUDA)
+uv run python scripts/build_certification_sets.py
 ```
 
-See `PROJECT.md` (Phase 5A) for the full analysis, per-database tables,
-the correction, and the explicit gates remaining before `max_seq_length`
-is finalized.
+See `PROJECT.md` (Phase 5A for the original analysis/per-database tables/
+correction; Phase 5B for the real-tokenizer confirmation and the
+still-outstanding GPU memory/throughput/resume certification gates before
+any full training run).

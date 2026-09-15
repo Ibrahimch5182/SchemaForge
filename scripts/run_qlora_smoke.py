@@ -1,18 +1,20 @@
-"""Phase 4 QLoRA SMOKE TEST for LocalSQL -- NOT full-experiment training.
+"""QLoRA training runner for LocalSQL -- Phase 4 smoke test AND Phase 5B
+GPU/throughput certification and stop/resume runs. NOT full-experiment
+training (this script never runs an unbounded epoch count on the full
+6,067-example canonical dataset).
 
-Proves the QLoRA training path (4-bit NF4 base, LoRA adapter, completion-
-only loss) works end to end on Kaggle/T4, on a small subset and/or a
-bounded number of optimizer steps. Reuses Phase 1's prepared `train.jsonl`
-verbatim (prompt/completion/evidence-dropout already baked in) -- never
-re-splits or re-derives the dataset. BIRD Mini-Dev is never touched here.
+Reuses Phase 1's prepared `train.jsonl` verbatim by default, or any JSONL
+via `--input` (e.g. a Phase 5B certification set) -- never re-splits or
+re-derives a dataset. BIRD Mini-Dev is never touched here.
 
 Modes:
   --dry-run        Validate data/config only. No model, no CUDA.
-  --token-profile  Tokenizer-only profiling of the REAL training prompts
-                    (and full SFT sequence length incl. completion). No
-                    4-bit model load. Does NOT auto-adjust max_seq_length.
-  (default)        Bounded QLoRA smoke training, then (unless
-                    --skip-verify) an adapter-reload sanity check.
+  --token-profile  Tokenizer-only profiling (see --input above). No 4-bit
+                    model load. Does NOT auto-adjust max_seq_length.
+  (default)        Bounded QLoRA training, then (unless --skip-verify) an
+                    adapter-reload sanity check. Supports checkpointing
+                    (--save-steps/--save-total-limit) and explicit resume
+                    (--resume-from-checkpoint) -- never auto-resumes.
   --verify-adapter Standalone adapter-reload sanity check against an
                     existing run's saved adapter. NOT an accuracy eval.
 
@@ -20,6 +22,23 @@ Usage (on a CUDA cloud/Kaggle machine):
     uv sync --group model --group train
     uv run python scripts/run_qlora_smoke.py --run-id qlora-smoke-1 \\
         --max-train-examples 200 --max-steps 20
+
+    # Phase 5B worst-case memory certification (16 longest candidate examples):
+    uv run python scripts/run_qlora_smoke.py --run-id phase5b-mem-cert \\
+        --input data/certification/longest_16.jsonl --max-steps 2
+
+    # Explicit checkpoint + resume (RUN A then RUN B, two SEPARATE
+    # `--run-id`s and two separate process invocations -- this runner
+    # refuses to overwrite a run-id that already has a summary.json, and
+    # resume must always continue INTO a new run directory, never
+    # overwrite the checkpoint's own parent run):
+    uv run python scripts/run_qlora_smoke.py --run-id phase5b-resume-a \\
+        --input data/certification/longest_16.jsonl --max-steps 2 \\
+        --save-steps 1 --save-total-limit 2
+    uv run python scripts/run_qlora_smoke.py --run-id phase5b-resume-b \\
+        --input data/certification/longest_16.jsonl --max-steps 4 \\
+        --save-steps 1 --save-total-limit 2 \\
+        --resume-from-checkpoint data/runs/phase5b-resume-a/checkpoint/checkpoint-2
 
 Usage (local Windows dev, no GPU -- infra validation only):
     uv run python scripts/run_qlora_smoke.py --run-id qlora-smoke-1-check \\
@@ -42,12 +61,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from localsql.model.run_artifacts import numeric_stats  # noqa: E402
+from localsql.train.certification import write_token_length_manifest  # noqa: E402
 from localsql.train.config import (  # noqa: E402
     load_train_config,
     lora_summary,
     optimization_summary,
     quantization_summary,
 )
+from localsql.train.provenance import resolve_source_revision  # noqa: E402
 from localsql.train.sft_data import build_sft_encoding, load_prepared_examples  # noqa: E402
 
 
@@ -103,7 +124,13 @@ def load_arbitrary_jsonl_for_profiling(path: Path, limit: int | None):
                 continue
             row = json.loads(line)
             examples.append(
-                SimpleNamespace(example_id=row["example_id"], prompt=row["prompt"], completion=row["completion"])
+                SimpleNamespace(
+                    example_id=row["example_id"],
+                    prompt=row["prompt"],
+                    completion=row["completion"],
+                    db_id=row.get("db_id"),
+                    representation=row.get("representation"),
+                )
             )
     if limit:
         examples = examples[:limit]
@@ -154,6 +181,12 @@ def run_token_profile(
     full prefix boundary -- the same check Phase 4 validated at
     0/6,067 mismatches -- flagging any example where it fails rather than
     silently trusting the assumption.
+
+    Also writes a REAL per-example token-length manifest
+    (`<profile_name>_token_lengths.jsonl`) -- the sole, real-tokenizer-only
+    input to Phase 5B's canonical throughput sampling
+    (`localsql.train.certification.build_real_token_throughput_sample`).
+    The local character-count estimator is never used for this manifest.
     """
     from localsql.train.qlora_backend import QLoraBackend
 
@@ -165,6 +198,7 @@ def run_token_profile(
     total_counts: list[float] = []
     example_ids: list[str] = []
     prefix_mismatch_ids: list[str] = []
+    token_length_records: list[dict] = []
     for ex in examples:
         encoding = build_sft_encoding(backend._tokenizer, ex.example_id, ex.prompt, ex.completion, max_seq_length=None)
         prompt_counts.append(float(encoding.prompt_token_count))
@@ -172,11 +206,26 @@ def run_token_profile(
         example_ids.append(ex.example_id)
         if not encoding.prefix_matches:
             prefix_mismatch_ids.append(ex.example_id)
+        token_length_records.append(
+            {
+                "example_id": ex.example_id,
+                "db_id": getattr(ex, "db_id", None),
+                "representation": getattr(ex, "representation", None),
+                "prompt_only_token_count": encoding.prompt_token_count,
+                "full_sft_token_count": encoding.total_token_count,
+                "completion_token_count": encoding.completion_token_count,
+                "prefix_boundary_match": encoding.prefix_matches,
+            }
+        )
 
     thresholds = (3584, cfg.token_profile.warn_threshold, cfg.token_profile.hard_limit)
 
     def threshold_counts(values: list[float]) -> dict:
         return {f">{t}": sum(1 for v in values if v > t) for t in thresholds}
+
+    run_dir.mkdir(parents=True, exist_ok=True)
+    token_lengths_path = run_dir / f"{profile_name}_token_lengths.jsonl"
+    token_lengths_sha256 = write_token_length_manifest(token_lengths_path, token_length_records)
 
     report = {
         "input_file": str(input_path),
@@ -197,12 +246,22 @@ def run_token_profile(
         },
         "configured_max_seq_length": cfg.sequence.max_seq_length,
         "note": "max_seq_length was NOT auto-adjusted from this profile -- review before changing configs/train.yaml.",
+        "token_length_manifest": {
+            "description": (
+                "Real per-example token-length manifest (this tokenizer/chat-template run only -- "
+                "never the local character-count estimator). Sole input to Phase 5B's canonical "
+                "throughput sample (localsql.train.certification.build_real_token_throughput_sample)."
+            ),
+            "path": str(token_lengths_path),
+            "sha256": token_lengths_sha256,
+            "example_count": len(token_length_records),
+        },
     }
-    run_dir.mkdir(parents=True, exist_ok=True)
     profile_path = run_dir / f"{profile_name}_token_profile.json"
     profile_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     print(f"\nWrote {profile_path}")
+    print(f"Wrote real per-example token-length manifest: {token_lengths_path} (sha256={token_lengths_sha256})")
     if prefix_mismatch_ids:
         print(f"\nWARNING: {len(prefix_mismatch_ids)} example(s) failed the prefix-boundary check -- see report.")
 
@@ -211,14 +270,30 @@ def run_token_profile(
     print("(For a later, separate GPU memory certification run -- NOT performed by this command.)")
 
 
-def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps: int, skip_verify: bool) -> None:
+def run_smoke_training(
+    cfg,
+    examples,
+    run_dir: Path,
+    train_path: Path,
+    max_steps: int,
+    skip_verify: bool,
+    save_steps: int | None = None,
+    save_total_limit: int | None = None,
+    resume_from_checkpoint: str | None = None,
+    source_revision: str | None = None,
+) -> None:
     from localsql.train.qlora_backend import NonFiniteLossError, QLoraBackend
 
     if run_dir.exists() and (run_dir / "summary.json").exists():
         print(f"BLOCKER: run directory {run_dir} already has a completed summary.json. "
-              "This smoke runner does not support resume -- use a new --run-id.")
+              "This runner does not overwrite a completed run -- use a new --run-id "
+              "(pointing --resume-from-checkpoint at the prior run's checkpoint dir if continuing it).")
         sys.exit(1)
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    if resume_from_checkpoint and not Path(resume_from_checkpoint).exists():
+        print(f"BLOCKER: --resume-from-checkpoint path does not exist: {resume_from_checkpoint}")
+        sys.exit(1)
 
     backend = QLoraBackend(cfg)
     print(f"Loading {cfg.model.id} for QLoRA training (4-bit {cfg.runtime.quantization}) ...")
@@ -226,6 +301,9 @@ def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps
     print(f"Loaded. Resolved revision: {info.resolved_revision}  GPU: {info.gpu_name}")
     print(f"Trainable params: {info.trainable_param_count:,} / {info.total_param_count:,}")
 
+    source_revision_info = resolve_source_revision(source_revision, REPO_ROOT)
+
+    checkpoint_dir = run_dir / "checkpoint"
     run_config = {
         "run_id": run_dir.name,
         "model_id": cfg.model.id,
@@ -239,29 +317,52 @@ def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps
         "requested_train_examples": len(examples),
         "train_file": str(train_path),
         "train_file_sha256": file_sha256(train_path),
+        "checkpoint_dir": str(checkpoint_dir),
+        "save_steps": save_steps,
+        "save_total_limit": save_total_limit,
+        # Explicit resume source -- never inferred/auto-discovered. None
+        # here means this run started from scratch, not from a checkpoint.
+        "resume_from_checkpoint": resume_from_checkpoint,
+        # Never silently lost on Kaggle (git archive/upload strips .git) --
+        # explicit --source-revision > SOURCE_REVISION file > best-effort
+        # `git rev-parse HEAD`. See localsql.train.provenance.
+        "source_revision": source_revision_info["source_revision"],
+        "source_revision_origin": source_revision_info["source_revision_origin"],
     }
     (run_dir / "run_config.json").write_text(json.dumps(run_config, indent=2), encoding="utf-8")
 
     print(f"Building completion-only-masked SFT encodings for {len(examples)} examples ...")
     encodings = []
-    skipped_over_length = 0
+    skipped_over_length = []
     for ex in examples:
         encoding = build_sft_encoding(
             backend._tokenizer, ex.example_id, ex.prompt, ex.completion, max_seq_length=cfg.sequence.max_seq_length
         )
+        # `build_sft_encoding` never truncates -- an over-length example is
+        # either used whole or explicitly excluded and reported here, never
+        # silently chopped.
         if encoding.exceeds_max_seq_length:
-            skipped_over_length += 1
+            skipped_over_length.append(ex.example_id)
             continue
         encodings.append(encoding)
-    print(f"  usable: {len(encodings)}  skipped (exceeds max_seq_length={cfg.sequence.max_seq_length}): {skipped_over_length}")
+    print(f"  usable: {len(encodings)}  skipped (exceeds max_seq_length={cfg.sequence.max_seq_length}): {len(skipped_over_length)}")
+    if skipped_over_length:
+        print(f"  BLOCKER-LEVEL NOTE: skipped example_ids: {skipped_over_length}")
     if not encodings:
         print("BLOCKER: no usable training examples after filtering by max_seq_length.")
         sys.exit(1)
 
-    checkpoint_dir = run_dir / "checkpoint"
-    print(f"Training (max_steps={max_steps}) ...")
+    sequence_lengths = [e.total_token_count for e in encodings]
+    print(f"Training (max_steps={max_steps}, resume_from_checkpoint={resume_from_checkpoint!r}) ...")
     try:
-        train_result = backend.train_smoke(encodings, checkpoint_dir, max_steps=max_steps)
+        train_result = backend.train_smoke(
+            encodings,
+            checkpoint_dir,
+            max_steps=max_steps,
+            save_steps=save_steps,
+            save_total_limit=save_total_limit,
+            resume_from_checkpoint=resume_from_checkpoint,
+        )
     except NonFiniteLossError as e:
         print(f"BLOCKER: {e}")
         sys.exit(1)
@@ -306,10 +407,20 @@ def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps
         "max_steps": max_steps,
         "requested_train_examples": len(examples),
         "usable_train_examples": len(encodings),
-        "skipped_exceeds_max_seq_length": skipped_over_length,
+        "skipped_exceeds_max_seq_length_count": len(skipped_over_length),
+        "skipped_exceeds_max_seq_length_example_ids": skipped_over_length,
+        "any_sequence_truncated": False,  # structural guarantee: build_sft_encoding never truncates
+        "sequence_length_min": min(sequence_lengths) if sequence_lengths else None,
+        "sequence_length_max": max(sequence_lengths) if sequence_lengths else None,
         "global_step": train_result["global_step"],
+        "starting_global_step": train_result["starting_global_step"],
+        "resumed_from_checkpoint": train_result["resumed_from_checkpoint"],
+        "checkpoint_dir": str(checkpoint_dir),
+        "save_steps": save_steps,
+        "save_total_limit": save_total_limit,
         "runtime_seconds": train_result["runtime_seconds"],
-        "peak_gpu_memory_mb": train_result["peak_gpu_memory_mb"],
+        "peak_gpu_memory_allocated_mb": train_result["peak_gpu_memory_allocated_mb"],
+        "peak_gpu_memory_reserved_mb": train_result["peak_gpu_memory_reserved_mb"],
         "train_result_metrics": train_result["train_result_metrics"],
         "adapter_path": str(adapter_dir),
         "adapter_verification": verification,
@@ -320,9 +431,13 @@ def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps
             "transformers_version": info.transformers_version,
             "peft_version": info.peft_version,
             "bitsandbytes_version": info.bitsandbytes_version,
+            "accelerate_version": info.accelerate_version,
+            "trl_version": info.trl_version,
             "cuda_version": info.cuda_version,
             "gpu_name": info.gpu_name,
             "gpu_total_memory_mb": info.gpu_total_memory_mb,
+            "source_revision": source_revision_info["source_revision"],
+            "source_revision_origin": source_revision_info["source_revision_origin"],
         },
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -379,6 +494,38 @@ def main() -> None:
     )
     parser.add_argument("--verify-adapter", action="store_true")
     parser.add_argument("--skip-verify", action="store_true", help="Skip the post-training adapter sanity check.")
+    parser.add_argument(
+        "--save-steps",
+        type=int,
+        default=None,
+        help="Save a full resumable Trainer checkpoint (model/adapter, optimizer, scheduler, RNG, "
+        "trainer_state.json) every N optimizer steps. Omit to disable checkpointing (matches prior "
+        "Phase 4 behavior).",
+    )
+    parser.add_argument(
+        "--save-total-limit",
+        type=int,
+        default=None,
+        help="Maximum number of checkpoints to keep under checkpoint_dir (oldest deleted first). "
+        "Only meaningful with --save-steps.",
+    )
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        type=str,
+        default=None,
+        help="Explicit path to a prior run's checkpoint-N directory to resume full Trainer state from. "
+        "Never auto-discovered -- must be passed explicitly, and is recorded verbatim in "
+        "run_config.json/summary.json. BLOCKER if the path does not exist.",
+    )
+    parser.add_argument(
+        "--source-revision",
+        type=str,
+        default=None,
+        help="Explicit source-repo revision (commit hash or similar) to record in run_config.json/"
+        "summary.json. Takes priority over a SOURCE_REVISION file at the repo root and a best-effort "
+        "`git rev-parse HEAD` -- needed because `git archive`/Kaggle upload strips .git, which would "
+        "otherwise silently lose this provenance.",
+    )
     args = parser.parse_args()
 
     cfg = load_train_config(args.train_config)
@@ -410,7 +557,18 @@ def main() -> None:
         return
 
     try:
-        run_smoke_training(cfg, examples, run_dir, train_path, args.max_steps, args.skip_verify)
+        run_smoke_training(
+            cfg,
+            examples,
+            run_dir,
+            train_path,
+            args.max_steps,
+            args.skip_verify,
+            save_steps=args.save_steps,
+            save_total_limit=args.save_total_limit,
+            resume_from_checkpoint=args.resume_from_checkpoint,
+            source_revision=args.source_revision,
+        )
     except Exception as e:
         print(f"BLOCKER: run stopped -- {type(e).__name__}: {e}")
         sys.exit(1)

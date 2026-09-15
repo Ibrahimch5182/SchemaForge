@@ -58,6 +58,17 @@ data/reports/*
 data/runs/*
 !data/runs/.gitkeep
 
+# Phase 5B: GPU/throughput certification datasets (reproducible via
+# scripts/build_certification_sets.py from data/processed_phase5_candidate
+# + the real Kaggle-tokenizer longest-examples manifest)
+data/certification/*
+!data/certification/.gitkeep
+
+# Phase 5B: durable checkpoint exports (reproducible via
+# scripts/export_checkpoint.py from a given run's checkpoint directory)
+data/exports/*
+!data/exports/.gitkeep
+
 # Hugging Face / dataset caches
 .cache/
 .hf_cache/

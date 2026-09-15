@@ -1,10 +1,12 @@
-# LocalSQL Training (Phase 4): QLoRA Smoke Test
+# LocalSQL Training: QLoRA Smoke Test (Phase 4) + Certification/Resume (Phase 5B)
 
 Phase 4 proves the QLoRA training path works correctly end to end -- on a
 small subset and/or a bounded number of optimizer steps -- before any real,
 full-length fine-tuning run is attempted. **This is a smoke test, not the
 fine-tuning experiment.** No full training happens in this phase, and BIRD
-Mini-Dev is never touched here.
+Mini-Dev is never touched here. `scripts/run_qlora_smoke.py` was later
+extended (Phase 5B, still no full training) with checkpointing and
+explicit resume support -- see "Checkpointing and resume" below.
 
 ## Result (Kaggle, real run) -- COMPLETE
 
@@ -14,9 +16,11 @@ model/tokenizer revision `cdbee75f17c01a7cc42f958dc650907174af0554` (same
 as the Phase 3 baseline). Adapter saved and reload-verified
 (`adapter_active=true`). An initial attempt hit a CUDA allocator-
 fragmentation OOM; the retry with `PYTORCH_ALLOC_CONF=expandable_segments:True`
-succeeded with **no hyperparameter changes**. Full writeup, real token
-profile, and the Phase 5 context-length decision (explicitly **not**
-resolved by this phase) are in `PROJECT.md` (Phase 4).
+succeeded with **no hyperparameter changes**. Full writeup and real token
+profile are in `PROJECT.md` (Phase 4); the context-length decision this
+phase left unresolved was later settled in Phase 5A/5B (compaction policy
++ real-tokenizer-confirmed `max_seq_length=4096` for the candidate
+dataset) -- see `PROJECT.md` (Phase 5A/5B).
 
 ## Data: reused, not re-derived
 
@@ -91,13 +95,18 @@ run below was deliberately chosen to fit under 4096 (max 3,593 tokens) --
 that 3,593 ceiling describes the smoke subset, not the full training set,
 and must not be read as evidence that 4096 is adequate overall.
 
-**4096 is NOT approved for Phase 5 full training** (excludes ~23% of
-examples); **8192 is not automatically approved either** (still excludes
-~8.9%). The long-context/schema strategy -- raise the limit further,
-handle `works_cycles`/`hockey` specially, or something else -- is an
-explicit **Phase 5 pre-training decision**, not made here. Whatever is
-decided, gold SQL must never be silently truncated and no database group
-may be silently discarded -- any exclusion must be explicit and reported.
+**4096 was NOT approved for full training against this ORIGINAL
+(pre-compaction) dataset** (excludes ~23% of examples). Phase 5's
+adaptive per-database schema compaction (see `PROJECT.md`, Phase 5A/5B)
+resolves this: after compacting the flagged DBs (`works_cycles`,
+`hockey`, and 7 others), the real-tokenizer profile of the resulting
+candidate dataset shows **zero** examples over 4096 tokens, and
+`max_seq_length=4096` is approved **for that candidate dataset only** --
+never for this original data. Gold SQL is never silently truncated and no
+database group is silently discarded -- any exclusion is explicit and
+reported (`localsql.train.sft_data.build_sft_encoding` never truncates;
+an over-length example is used whole or explicitly skipped and named in
+`summary.json`).
 
 ## Smoke run
 
@@ -188,5 +197,55 @@ uv run python scripts/run_qlora_smoke.py --run-id <id> --dry-run --max-train-exa
 
 Validates the training data and config only.
 
-See `PROJECT.md` (Phase 4) for the full rationale, real-hardware evidence,
-and the unresolved Phase 5 context-length decision.
+## Checkpointing and resume (Phase 5B)
+
+```powershell
+uv run python scripts/run_qlora_smoke.py --run-id <id> \
+  --save-steps 1 --save-total-limit 2
+uv run python scripts/run_qlora_smoke.py --run-id <new-id> \
+  --resume-from-checkpoint data/runs/<id>/checkpoint/checkpoint-<N>
+```
+
+`--save-steps` enables `Trainer`'s own full-state periodic checkpointing
+(LoRA adapter, optimizer, LR scheduler, RNG, `trainer_state.json`) under
+`checkpoint/checkpoint-<step>` -- not just the final adapter-only export
+under `adapter/`. `--resume-from-checkpoint` is always explicit; nothing
+auto-discovers or auto-resumes from an arbitrary directory, and a run-id
+that already has `summary.json` is refused (start a new `--run-id` to
+resume, pointing it at the prior run-id's checkpoint dir). `run_config.json`
+and `summary.json` both record `checkpoint_dir`, `save_steps`,
+`save_total_limit`, `resume_from_checkpoint`, `starting_global_step`, the
+final `global_step`, and (reliability-hardened) `source_revision`/
+`source_revision_origin` + `accelerate_version`/`trl_version`, so a resume
+is independently verifiable from run artifacts alone. `--source-revision`
+lets you pin the source commit explicitly -- `git archive`/Kaggle upload
+strips `.git`, so without it (or a `SOURCE_REVISION` file at the repo
+root) this falls back to a best-effort `git rev-parse HEAD` that can
+silently come up empty.
+
+`scripts/export_checkpoint.py` packages a checkpoint for durable transfer
+off an ephemeral Kaggle VM -- and now FAILS CLOSED: it refuses to write
+any package (`IncompleteCheckpointError`) if the checkpoint is missing
+any required resumable-state category (model/adapter, optimizer,
+scheduler, trainer state, RNG state, training arguments), and it packages
+the run's EXACT training-data JSONL byte-for-byte, SHA256-verified
+against `run_config.json` (`TrainingDataMismatchError` if it doesn't
+match -- resuming against a different/reordered dataset is unsafe). See
+`PROJECT.md` (Phase 5B) for the exact stop/resume certification procedure
+(RUN A / RUN B) and the full reliability-correction writeup.
+
+**Canonical throughput sampling requires a REAL per-example token-length
+manifest, not the character-count estimator.** Run
+`--token-profile` against the candidate dataset first (this also writes
+`<profile>_token_lengths.jsonl`), then `scripts/build_certification_sets.py`
+to build the sample from it:
+
+```powershell
+uv run python scripts/run_qlora_smoke.py --run-id phase5-candidate-profile \
+  --input data/processed_phase5_candidate/train.jsonl --token-profile
+uv run python scripts/build_certification_sets.py
+```
+
+See `PROJECT.md` (Phase 4 for the smoke-test rationale and real-hardware
+evidence; Phase 5A/5B for the context-length policy resolution and GPU/
+throughput/resume certification status).

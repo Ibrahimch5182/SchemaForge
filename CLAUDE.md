@@ -12,21 +12,28 @@ executable read-only SQL query. Target model: `Qwen/Qwen3-4B-Instruct-2507`
 
 ## Current phase
 
-**Phase 5A IN PROGRESS: candidate training-context policy finalized, NOT
-yet confirmed with the real tokenizer.** Phases 1-4 are complete (Phase 4:
-real Kaggle QLoRA smoke test, 20/20 steps, adapter saved + reload-
-verified). **Selected candidate policy**: adaptive per-database full-
-schema compaction (`localsql.schema_context.db_policy`,
-`scripts/build_phase5_candidate.py`) -- 9/62 train DBs (1,502/6,067
-examples, real-Kaggle-data-derived) and 2/7 validation DBs (173/534,
-local-estimate-derived) get the compact serializer; everything else is
-byte-identical to Phase 1. The question-conditioned schema budgeter
-(98.17% gold retention, not 100%) was evaluated and explicitly NOT
-selected -- it remains in the repo as documented research tooling only.
-**Candidate `max_seq_length=4096` is provisional until a real-tokenizer
-Kaggle profile of the candidate dataset confirms zero over-4096 examples
-and a longest-example GPU memory certification succeeds -- see
-`PROJECT.md` (Phase 5A) before treating it as final.** A prior version of
+**Phase 5B IN PROGRESS: GPU certification, throughput benchmark, and
+crash-safe resume infrastructure built; real Kaggle GPU certification
+NOT yet run.** Phases 1-4 are complete (Phase 4: real Kaggle QLoRA smoke
+test, 20/20 steps, adapter saved + reload-verified). **Selected candidate
+policy**: adaptive per-database full-schema compaction
+(`localsql.schema_context.db_policy`, `scripts/build_phase5_candidate.py`)
+-- 9/62 train DBs (1,502/6,067 examples, real-Kaggle-data-derived) and
+2/7 validation DBs (173/534, local-estimate-derived) get the compact
+serializer; everything else is byte-identical to Phase 1. The
+question-conditioned schema budgeter (98.17% gold retention, not 100%)
+was evaluated and explicitly NOT selected -- it remains in the repo as
+documented research tooling only. **Candidate `max_seq_length=4096` is
+now APPROVED** -- real-tokenizer Kaggle profiling of the full 6,067-train/
+534-validation candidate dataset (tokenizer revision
+`cdbee75f17c01a7cc42f958dc650907174af0554`) confirmed zero examples over
+4096 tokens and zero prefix-boundary mismatches. **Still outstanding
+before any full training run**: (B) worst-case longest-16-example T4
+memory certification, (C) representative-64-example throughput benchmark,
+(D) stop/resume certification -- all built (`scripts/run_qlora_smoke.py`
+checkpointing, `scripts/export_checkpoint.py`) but not yet executed on
+real Kaggle GPU hardware. See `PROJECT.md` (Phase 5B) for exact commands
+and gate status before treating any of B-D as passed. A prior version of
 this document's token counts contained an uncorrected local-estimate
 number (1,626) presented ambiguously next to real numbers; the real
 Phase 4 figure is 1,398 -- see `PROJECT.md` for the full correction. No
@@ -105,12 +112,16 @@ User question --> schema introspection --> fine-tuned model
     adapter saved + reload-verified; required
     `PYTORCH_ALLOC_CONF=expandable_segments:True` after an initial
     allocator-fragmentation OOM (no hyperparameter change). **Real token
-    profile over all 6,067 training examples: 1,398 (~23%) exceed 4096
-    tokens, 539 (~8.9%) exceed 8192, concentrated in `works_cycles` and
-    `hockey`. Neither 4096 nor 8192 is approved for Phase 5 full training
-    -- the context-length/schema strategy is an explicit unresolved Phase 5
-    decision. Never silently truncate gold SQL or silently drop a
-    database.**
+    profile over all 6,067 ORIGINAL (pre-compaction) training examples:
+    1,398 (~23%) exceed 4096 tokens, 539 (~8.9%) exceed 8192, concentrated
+    in `works_cycles` and `hockey`. This is why Phase 5's adaptive
+    per-database compaction policy exists: after compacting those flagged
+    DBs (Phase 5A/5B candidate dataset), the real-tokenizer profile shows
+    zero examples over 4096 -- see `PROJECT.md` (Phase 5B) for the
+    confirmed numbers. `max_seq_length=4096` is approved for the Phase 5
+    CANDIDATE (compacted) dataset only, never for the original
+    uncompacted Phase 1 data. Never silently truncate gold SQL or
+    silently drop a database.**
 
 ## Environment note
 
