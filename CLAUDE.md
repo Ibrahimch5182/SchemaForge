@@ -12,13 +12,16 @@ executable read-only SQL query. Target model: `Qwen/Qwen3-4B-Instruct-2507`
 
 ## Current phase
 
-**Phase 4 IN PROGRESS: QLoRA smoke-test infrastructure implemented; no
-real Kaggle GPU training run has happened yet.** Phases 1 (training-data
-pipeline), 2 (external BIRD Mini-Dev evaluation), and 3 (untuned baseline:
-real Kaggle run, official EX 43.6 / Soft-F1 47.6975) are complete. No
-actual training run and no application code exist yet. See `PROJECT.md`
-for the full chronological engineering journal. Do not implement later
-phases unless explicitly asked.
+**Phase 4 COMPLETE: real Kaggle QLoRA smoke test succeeded (20/20 steps,
+finite loss, adapter saved + reload-verified).** Phases 1 (training-data
+pipeline), 2 (external BIRD Mini-Dev evaluation), 3 (untuned baseline:
+real Kaggle run, official EX 43.6 / Soft-F1 47.6975), and 4 are complete.
+**The Phase 5 context-length/schema strategy is an explicit open decision
+-- do not pick 4096, 8192, or anything else without reviewing the real
+token profile in `PROJECT.md` first.** No full training run and no
+application code exist yet. See `PROJECT.md` for the full chronological
+engineering journal. Do not implement later phases unless explicitly
+asked.
 
 ## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`)
 
@@ -81,13 +84,21 @@ User question --> schema introspection --> fine-tuned model
 11. Phase 4 QLoRA is a starting configuration, not a final one: LoRA
     r=16/alpha=32/dropout=0.05 on all 7 attention+MLP projections,
     completion-only loss (prompt tokens label -100, explicit and tested,
-    never an SFT framework's default), `max_seq_length=4096` explicitly
-    provisional until reviewed against the real training-prompt token
-    profile (`--token-profile`, never auto-applied). `scripts/
-    run_qlora_smoke.py` reads only Phase 1's `train.jsonl` -- never BIRD
-    Mini-Dev. Adapter-reload verification is a plumbing check, not an
-    accuracy evaluation; Mini-Dev scoring happens later, via the existing
-    Phase 2 evaluator, only once a real fine-tuned checkpoint exists.
+    never an SFT framework's default). `scripts/run_qlora_smoke.py` reads
+    only Phase 1's `train.jsonl` -- never BIRD Mini-Dev. Adapter-reload
+    verification is a plumbing check, not an accuracy evaluation; Mini-Dev
+    scoring happens later, via the existing Phase 2 evaluator, only once a
+    real fine-tuned checkpoint exists. Real Kaggle smoke result (200
+    examples, 20/20 steps): final loss 0.410, peak GPU memory 11,550.2 MB,
+    adapter saved + reload-verified; required
+    `PYTORCH_ALLOC_CONF=expandable_segments:True` after an initial
+    allocator-fragmentation OOM (no hyperparameter change). **Real token
+    profile over all 6,067 training examples: 1,398 (~23%) exceed 4096
+    tokens, 539 (~8.9%) exceed 8192, concentrated in `works_cycles` and
+    `hockey`. Neither 4096 nor 8192 is approved for Phase 5 full training
+    -- the context-length/schema strategy is an explicit unresolved Phase 5
+    decision. Never silently truncate gold SQL or silently drop a
+    database.**
 
 ## Environment note
 

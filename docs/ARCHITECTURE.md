@@ -1,11 +1,13 @@
 # LocalSQL Architecture (High Level)
 
 This document describes the intended end-to-end architecture across all
-phases. **Phases 1-3 are complete (Phase 3's real Kaggle baseline: official
-EX 43.6, Soft-F1 47.6975). Phase 4 (QLoRA smoke-test infrastructure) is
-implemented but no real Kaggle GPU training run has happened yet.**
-Everything else below is a plan, not code. See `PROJECT.md` for the full
-chronological journal.
+phases. **Phases 1-4 are complete** (Phase 3's real Kaggle baseline:
+official EX 43.6, Soft-F1 47.6975; Phase 4's real Kaggle QLoRA smoke test:
+20/20 steps, final loss 0.410, adapter saved and reload-verified). **The
+Phase 5 context-length/schema training strategy is an explicit open
+decision, not yet made** (neither 4096 nor 8192 is approved for full
+training -- see `PROJECT.md`). Everything else below is a plan, not code.
+See `PROJECT.md` for the full chronological journal.
 
 ## Offline ML pipeline (future phases)
 
@@ -19,13 +21,15 @@ BIRD (filtered train) --> prepare --> baseline eval --> QLoRA fine-tune --> eval
   (4-bit NF4, matching the QLoRA base representation) against the canonical
   prompt contract. Real Kaggle result: official EX 43.6, Soft-F1 47.6975,
   500/500 generated.
-- **QLoRA fine-tune** (Phase 4, smoke-test infrastructure implemented, no
-  real run yet): 4-bit QLoRA supervised fine-tuning of
-  `Qwen/Qwen3-4B-Instruct-2507` using Hugging Face Transformers + PEFT +
-  bitsandbytes (TRL installed, not yet the training-loop driver -- see
-  `docs/TRAINING.md`) on Phase 1's `train.jsonl`, reused verbatim. A
-  smoke test (bounded steps/subset) validates the mechanics first; a
-  full-length run is a later, separate decision.
+- **QLoRA fine-tune** (Phase 4 smoke test complete; full run not started):
+  4-bit QLoRA supervised fine-tuning of `Qwen/Qwen3-4B-Instruct-2507`
+  using Hugging Face Transformers + PEFT + bitsandbytes (TRL installed,
+  not yet the training-loop driver -- see `docs/TRAINING.md`) on Phase 1's
+  `train.jsonl`, reused verbatim. The smoke test (200 examples, 20 steps)
+  proved the mechanics work on real Kaggle hardware. A full-length run
+  requires a Phase 5 decision on context-length/schema strategy first --
+  the real token profile shows 23% of examples exceed 4096 tokens (8.9%
+  exceed 8192), concentrated in two schema-heavy databases.
 - **evaluate** (Phase 2, implemented up to the scoring boundary): score
   future model predictions against BIRD Mini-Dev (original 500 SELECT-only
   SQLite, official EX/Soft-F1 evaluator) via the gold-free generation
@@ -88,7 +92,7 @@ without needing an agent loop.
   `--token-profile` mode.
 - See `docs/BASELINE.md` for the full rationale, workflow, and real results.
 
-## What Phase 4 actually built (smoke-test infrastructure only -- no run yet)
+## What Phase 4 actually built (smoke-test infrastructure + real Kaggle run)
 
 - QLoRA config (`src/localsql/train/config.py`), SFT data loading +
   explicit, unit-tested completion-only label masking
@@ -102,7 +106,12 @@ without needing an agent loop.
   `max_seq_length`), bounded smoke training (`--max-train-examples`,
   `--max-steps`), and `--verify-adapter` (plumbing check only, not an
   accuracy evaluation; BIRD Mini-Dev untouched).
-- See `docs/TRAINING.md` for the full rationale and workflow.
+- Real Kaggle run: 200-example/20-step smoke test succeeded (final loss
+  0.410, peak GPU memory 11,550.2 MB) after an allocator-fragmentation
+  OOM was resolved via `PYTORCH_ALLOC_CONF=expandable_segments:True` (no
+  hyperparameter change); adapter saved and reload-verified. Real token
+  profile over all 6,067 training examples obtained and reviewed.
+- See `docs/TRAINING.md` for the full rationale, workflow, and results.
 
 Implementation of a full-length training run, application backend/frontend,
 or any agent/RAG/orchestration layer is explicitly out of scope until a

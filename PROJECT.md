@@ -562,8 +562,10 @@ the exact 4-bit NF4 representation fine-tuning would also use.
 
 ## Phase 4 -- QLoRA Training Smoke Test
 
-**Status: IN PROGRESS -- smoke-test infrastructure implemented; no real
-Kaggle GPU training run has happened yet.**
+**Status: COMPLETE -- real Kaggle QLoRA smoke run succeeded (20/20 steps,
+finite loss, adapter saved and reload-verified). Phase 5 context-length
+strategy remains an explicit open decision (see below) -- this phase does
+not choose it.**
 
 ### Goal
 
@@ -641,6 +643,14 @@ infrastructure isn't silently broken.
   `trl` -- deliberately not re-listing `torch`/`transformers`/`accelerate`/
   `bitsandbytes` (already in the `model` group), so installing it never
   risks reinstalling Kaggle's own torch build.
+- **Artifact-contract bug fixed**: the real successful smoke run correctly
+  embedded `adapter_verification` inside `summary.json`, but the promised
+  standalone `adapter_verification.json` was never written -- the
+  post-training verification path only built the dict, it never called a
+  writer. Fixed with a single shared `write_adapter_verification()`
+  helper, now called from both the post-training path and the standalone
+  `--verify-adapter` mode (so they cannot drift apart again), with a
+  CPU/offline regression test that doesn't require a new GPU run.
 
 ### Decisions and Reasoning
 
@@ -664,61 +674,182 @@ infrastructure isn't silently broken.
   accuracy evaluation, and BIRD Mini-Dev is not touched -- consistent with
   Phase 2's evaluation boundary.
 
+### Real Kaggle Environment / Provenance
+
+Python 3.12.13, torch 2.10.0+cu128, transformers 5.0.0, accelerate 1.13.0,
+bitsandbytes 0.50.2, peft 0.19.1, trl 1.13.0, CUDA 12.8, GPU Tesla T4
+(14911.7 MB total). Model `Qwen/Qwen3-4B-Instruct-2507`, resolved
+model/tokenizer revision `cdbee75f17c01a7cc42f958dc650907174af0554` (same
+revision as the Phase 3 baseline). QLoRA: 4-bit NF4, double quant, float16
+compute, LoRA r=16/alpha=32/dropout=0.05 on all 7 target modules, batch
+size 1, gradient accumulation 8, LR 1e-4, gradient checkpointing,
+`paged_adamw_8bit`, seed 42, completion-only loss.
+
+### Real Token Profile -- All 6,067 Training Examples
+
+| | prompt-only | full SFT (prompt+SQL) |
+|---|---|---|
+| min | 509 | 549 |
+| median | 2,468 | 2,506 |
+| p90 | 7,956.4 | 8,013.8 |
+| p95 | 27,890 | 27,927 |
+| p99 | 27,918.34 | 27,975 |
+| max | 27,995 | 28,082 |
+| count > 4096 | 1,397 | 1,398 |
+| count > 8192 | 539 | 539 |
+
+Real-Qwen masking/boundary validation (the assumption flagged as unverified
+after the infrastructure-only implementation): **0 prefix mismatches**
+across all 6,067 examples -- confirms `add_generation_prompt=True` really
+does produce an exact token-level prefix of the full sequence on the real
+tokenizer, so the completion-only mask boundary is correct in practice, not
+just in the fake-tokenizer unit tests. Median SQL completion contributes
+only 50 tokens to the sequence, max 216 -- **the long sequences are
+schema-driven, not SQL-target-driven.**
+
+**Database concentration of long schemas**: 9 of 62 training databases have
+at least one sequence exceeding 4096 tokens; only 2 exceed 8192.
+`works_cycles` (n=383, median ~27,948, max 28,082, *all* 383 examples
+exceed both 4096 and 8192) and `hockey` (n=156, median ~13,792, max 13,870,
+all 156 exceed both) account for the bulk of the extreme tail by
+themselves. Also over 4096: `movie_3` (n=223, median 4,314), `mondial_geo`
+(n=211, median 6,963), `synthea` (n=141, median 4,865),
+`professional_basketball` (n=113, median 8,021, none exceed 8192), `donor`
+(n=88, median 4,676), `superstore` (n=82, median 4,246); one `movie_3`-
+adjacent DB `world_development_indicators` has only 1 example over 4096.
+This is a small number of schema-heavy databases dominating the tail, not
+a spread-out long-tail across most databases.
+
+### 1-Step QLoRA Preflight (`qlora-smoke-preflight`)
+
+16 examples, 1 optimizer step: real 4-bit Qwen load succeeded; 33,030,144
+trainable / 2,238,840,320 total parameters (LoRA on 7 target modules);
+loss 1.5232, finite grad norm (7.31); adapter saved; no OOM. First proof
+the mechanics work end to end on real hardware.
+
+### 200-Example Canonical Smoke Subset -- Token Profile
+
+Deliberately chosen to fit comfortably under 4096 for the smoke test:
+full SFT sequence min 1,355, median 2,766.5, p90 3,551.2, p95 3,559.15,
+p99 3,593, **max 3,593** -- 0 examples above 4096 or 8192. **This 3,593-token
+ceiling is a property of the 200-example subset chosen for the smoke test,
+not of the training set as a whole** -- it says nothing about whether 4096
+or 8192 is an adequate limit for the real 6,067-example training set (see
+Phase 5 decision below).
+
+### Initial 20-Step Attempt: CUDA OOM (preserved as evidence, not hidden)
+
+The first attempt at 200 examples / 20 steps, without allocator tuning,
+failed with CUDA OOM before completing step 1: T4 total 14.56 GiB,
+PyTorch allocated 9.50 GiB, reserved-but-unallocated 3.47 GiB, requested
+allocation 1.48 GiB -- a classic allocator-fragmentation OOM (plenty of
+*reserved* memory, just not contiguous enough for the requested block),
+not an actual capacity shortfall.
+
+### Successful Retry: `PYTORCH_ALLOC_CONF=expandable_segments:True`
+
+Setting `PYTORCH_ALLOC_CONF=expandable_segments:True` (PyTorch's
+segment-expansion allocator, which avoids the fragmentation pattern above)
+and rerunning the identical 200-example / 20-step configuration
+(`qlora-smoke-1-alloc-retry`) succeeded: **20/20 optimizer steps
+completed**, all logged losses and gradient norms finite, final
+`train_loss = 0.40999391712248323`, `train_runtime = 3097.4346s`
+(`runtime_seconds = 3098.01` including setup/teardown), **peak GPU memory
+11,550.2 MB** (comfortably under the 14,911.7 MB T4 total once the
+allocator issue was resolved), 0 examples skipped for exceeding
+`max_seq_length=4096` (the 200-example subset was chosen specifically to
+avoid that). Adapter saved successfully.
+
+This is an environment/runtime fix, not a hyperparameter change: LoRA
+config, batch size, gradient accumulation, learning rate, and all other
+training hyperparameters are unchanged from `configs/train.yaml` between
+the failed and successful attempts -- only the CUDA allocator's memory
+management strategy changed.
+
+### Adapter-Reload Sanity Check
+
+Reload succeeded: `adapter_active = true`, `adapter_names = ["default"]`.
+Sample generation (from the saved adapter, on a real training prompt) --
+`SELECT T1.director_name FROM movies AS T1 WHERE T1.movie_title = 'Sex,
+Drink and Bloodshed'` -- a well-formed, SQL-only completion. **This is a
+plumbing sanity check only, not an accuracy evaluation**; BIRD Mini-Dev was
+not touched.
+
 ### Issues / Technical Debt
 
-- No real GPU training has happened yet -- loss curves, adapter behavior,
-  peak memory, and the real token profile do not exist yet.
-- The `Trainer`-based training loop (`qlora_backend.train_smoke`) cannot be
-  exercised by local tests at all (no torch/CUDA on this machine, and
-  unlike Phase 3's `generate_one`, its logic is too training-stack-specific
-  to fake convincingly with a `sys.modules` torch stub) -- it is validated
-  only by real Kaggle execution, the same way both Phase 3 BatchEncoding
-  bugs were only ever found that way. A focused follow-up session should be
-  expected if the real run surfaces an integration bug, matching the
-  established pattern from Phase 3.
-- `build_sft_encoding`'s prompt/completion boundary logic assumes
-  `add_generation_prompt=True` produces an exact token-level *prefix* of
-  the full assistant-turn sequence -- true for ChatML-style templates
-  (which Qwen3 uses) and now unit-tested against a fake tokenizer built to
-  faithfully model that property, but not yet confirmed against the real
-  Qwen tokenizer. Worth a quick assertion during the first real smoke run.
-- `paged_adamw_8bit` requires bitsandbytes' optimizer support to actually
-  be available in the installed stack; if it isn't, `Trainer` will raise
-  clearly at training start (not silently fall back), which is the
-  intended fail-clearly behavior.
+- **Fixed this closeout**: `adapter_verification.json` was not written by
+  the post-training verification path (only embedded in `summary.json`) --
+  see "What Was Built" above.
+- **Transformers 5.x `warmup_ratio` deprecation** (observed during the real
+  run): recorded as a Phase 5 compatibility cleanup item. Does not change
+  or invalidate the completed smoke results above -- `TrainingArguments`
+  still accepted it and warmup behaved as configured.
+- **Harmless greedy-generation warning** (temperature/top_p/top_k set but
+  unused under `do_sample=False`, observed during the adapter-reload
+  sanity check): cosmetic only, does not affect determinism or the sample
+  generation's correctness. Cleanup item, not a Phase 4 rerun trigger.
+- `paged_adamw_8bit` worked as configured on the real stack -- no fallback
+  needed.
 
 ### What We Learned
 
-(To be completed once the real Kaggle smoke run has happened.)
+The infrastructure-only implementation's two biggest open assumptions --
+whether `add_generation_prompt=True` really produces an exact prefix on
+the real Qwen tokenizer (0/6,067 mismatches: yes), and whether the
+`Trainer`-based training loop would need a Phase-3-style follow-up bugfix
+(no: it ran correctly on the first real attempt once the allocator issue
+was resolved) -- both held up. The one real failure mode (CUDA OOM) was an
+allocator/fragmentation issue, not a code or hyperparameter bug, and
+resolved with an environment variable rather than any change to the
+locked QLoRA configuration -- a useful reminder that "the run failed" and
+"the configuration is wrong" are not the same thing, and the fix belongs
+at the layer where the actual problem lives. Separately: the training-data
+token-length tail is concentrated in a handful of schema-heavy databases
+(`works_cycles`, `hockey` above all), not spread evenly -- a `max_seq_length`
+decision for Phase 5 is really a decision about how to handle *those
+specific databases*, not a generic "raise the number" question.
 
 ### Outcome
 
-**IN PROGRESS.** Infrastructure implemented and tested (116 tests passing,
-Phases 1-4 combined, all without network/CUDA/model downloads on this
-machine); no model has been downloaded, trained, or run on this machine.
-Phase 4 is not complete from this implementation alone -- it requires a
-real Kaggle GPU smoke run and review of its results (loss behavior, peak
-memory, adapter reload check, and the real token profile) before Phase 4
-can be marked PASSED.
+**COMPLETE.** Real Kaggle QLoRA smoke test succeeded end to end: 4-bit
+load, LoRA attach, completion-only-masked training (20/20 steps, finite
+loss throughout, final loss 0.410), adapter save, and adapter-reload
+verification, after resolving one allocator-related OOM via
+`PYTORCH_ALLOC_CONF=expandable_segments:True` (no hyperparameter changes).
+Real training-prompt token profile obtained and reviewed (6,067 examples).
+One artifact-contract bug (missing standalone `adapter_verification.json`)
+found and fixed with a regression test (118 tests passing, Phases 1-4
+combined). No model was downloaded, trained, or run on this development
+machine.
 
-### Acceptance Criteria for Marking Phase 4 Complete
+### Phase 5 Context-Length Decision -- Explicitly UNRESOLVED
 
-1. Real Kaggle smoke run completes without NaN/Inf loss or unhandled OOM.
-2. Loss is logged per step and looks like a real (if noisy, given the tiny
-   subset) training signal, not a flat/degenerate curve.
-3. LoRA adapter checkpoint saves successfully.
-4. Adapter-reload verification confirms the adapter is active and produces
-   a generation (still not an accuracy claim).
-5. Real training-prompt token profile (min/median/p90/p95/p99/max, counts
-   above 4096/8192) is obtained and reviewed against `max_seq_length=4096`
-   before any decision to change it.
-6. Peak GPU memory and full provenance are recorded in `summary.json`.
+This is the one substantive open question this phase surfaces and
+deliberately does not answer:
+
+- **4096 worked for the bounded Phase 4 smoke test** (the 200-example
+  subset was chosen to fit under it) -- that is a statement about the
+  smoke test, not a statement about the full training set.
+- **4096 is NOT accepted for the Phase 5 full experiment**: it excludes
+  1,398 of 6,067 training examples (~23%), concentrated in a handful of
+  schema-heavy databases (`works_cycles`, `hockey`, and 7 others).
+- **8192 is NOT automatically accepted either**: it still excludes 539
+  examples (~8.9%), almost entirely `works_cycles` and `hockey`.
+- The long-context / schema strategy for Phase 5 (raise `max_seq_length`
+  further? truncate/summarize only the worst-offending schemas? exclude
+  `works_cycles`/`hockey` from the full training run and note the
+  trade-off? some other approach?) is an explicit **pre-training decision
+  for Phase 5**, not decided in this closeout.
+- Whatever the eventual strategy, it must **never silently truncate gold
+  SQL** (the target itself) and must **never silently discard a database
+  group** -- any exclusion must be an explicit, reported, reviewable
+  decision, matching this project's established validation philosophy
+  from Phase 1 onward.
 
 ### What Comes Next
 
-Once the user runs the real Kaggle smoke test and the results are
-reviewed against the acceptance criteria above, this section will be
-updated with the actual outcome. Only after Phase 4 is marked PASSED would
-a full-length QLoRA training run (not a smoke test) be considered --
-and that decision, including any changes to `max_seq_length` or the
-starting hyperparameters above, is explicitly deferred until then.
+A Phase 5 full-length QLoRA training run requires, first, an explicit
+human decision on the context-length/schema strategy above -- informed by
+the real token profile and database-concentration data now recorded here,
+not by an unreviewed default. Only after that decision is made would
+full-length training (not a smoke test) begin.

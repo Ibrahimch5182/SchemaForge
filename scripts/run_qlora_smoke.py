@@ -55,6 +55,21 @@ def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def write_adapter_verification(run_dir: Path, verification: dict) -> Path:
+    """Persist the standalone `adapter_verification.json` artifact.
+
+    Shared by both the post-training sanity check (run automatically at
+    the end of `run_smoke_training`) and the standalone `--verify-adapter`
+    mode, so the two paths can never drift out of sync again -- this fixes
+    a bug where the post-training path only embedded the result into
+    `summary.json` and never wrote this file.
+    """
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out_path = run_dir / "adapter_verification.json"
+    out_path.write_text(json.dumps(verification, indent=2), encoding="utf-8")
+    return out_path
+
+
 def load_examples(cfg, repo_root: Path, limit: int | None):
     train_path = repo_root / cfg.data.train_file
     if not train_path.exists():
@@ -190,7 +205,9 @@ def run_smoke_training(cfg, examples, run_dir: Path, train_path: Path, max_steps
             "sample_example_id": examples[0].example_id,
             "sample_raw_completion": raw_completion,
         }
+        verification_path = write_adapter_verification(run_dir, verification)
         print(f"  adapter_active={verification['adapter_active']}  sample completion: {raw_completion[:120]!r}")
+        print(f"  Wrote {verification_path}")
 
     summary = {
         "run_id": run_dir.name,
@@ -253,8 +270,7 @@ def run_verify_adapter(cfg, run_dir: Path) -> None:
     print(f"Sample completion (NOT an accuracy check): {raw_completion!r}")
 
     result = {**info, "sample_raw_completion": raw_completion}
-    out_path = run_dir / "adapter_verification.json"
-    out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    out_path = write_adapter_verification(run_dir, result)
     print(f"\nWrote {out_path}")
 
 

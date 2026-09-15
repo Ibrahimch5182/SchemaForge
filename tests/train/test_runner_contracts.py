@@ -7,6 +7,7 @@ verbatim) and never touches BIRD Mini-Dev (external eval data) or the
 """
 
 import importlib.util
+import json
 from pathlib import Path
 
 from localsql.train.config import load_train_config
@@ -61,6 +62,39 @@ def test_load_examples_only_reads_configured_train_file(tmp_path):
     assert len(loaded) == 1
     assert loaded[0].split == "train"
     assert resolved_path == train_path
+
+
+def test_write_adapter_verification_persists_standalone_json_file(tmp_path):
+    """Regression for the missing-artifact bug: a real successful smoke run
+    (qlora-smoke-1-alloc-retry) embedded `adapter_verification` correctly
+    inside `summary.json` but never wrote the promised standalone
+    `adapter_verification.json`. CPU/offline -- no GPU run needed to prove
+    the file-writing behavior itself."""
+    module = _load_runner_module()
+    verification = {
+        "resolved_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+        "adapter_active": True,
+        "adapter_names": ["default"],
+        "sample_example_id": "birdsql/bird23-train-filtered:00000",
+        "sample_raw_completion": "SELECT T1.director_name FROM movies AS T1 WHERE T1.movie_title = 'x'",
+    }
+
+    out_path = module.write_adapter_verification(tmp_path, verification)
+
+    assert out_path == tmp_path / "adapter_verification.json"
+    assert out_path.exists()
+    assert json.loads(out_path.read_text(encoding="utf-8")) == verification
+
+
+def test_both_verification_call_sites_persist_the_standalone_artifact():
+    """Guards against the bug recurring: both the post-training sanity
+    check (inside run_smoke_training) and the standalone --verify-adapter
+    mode must call the shared writer, not just embed the result into
+    summary.json."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    # Match call sites ("... = write_adapter_verification(run_dir, ...)"),
+    # not the `def write_adapter_verification(...)` line itself.
+    assert source.count("= write_adapter_verification(run_dir") == 2
 
 
 def test_real_phase1_train_file_loads_and_is_all_split_train():

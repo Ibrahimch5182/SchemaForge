@@ -30,12 +30,13 @@ the training-data pipeline, `docs/EVALUATION.md` for the benchmark,
 QLoRA smoke test. `PROJECT.md` is the full chronological engineering
 journal.
 
-## Current phase: Phase 4 IN PROGRESS -- QLoRA smoke-test infrastructure
+## Current phase: Phase 4 COMPLETE -- QLoRA smoke test succeeded
 
-Phases 1, 2, and 3 are complete (Phase 3's real Kaggle baseline: official
-EX 43.6, Soft-F1 47.6975). Phase 4 (below) has implemented QLoRA
-smoke-test infrastructure; **no real Kaggle GPU training run has happened
-yet** -- that is a manual step the user performs next.
+Phases 1-4 are complete. Phase 3's real Kaggle baseline: official EX 43.6,
+Soft-F1 47.6975. Phase 4's real Kaggle QLoRA smoke test: 20/20 steps,
+final loss 0.410, adapter saved and reload-verified. **The Phase 5
+context-length/schema strategy remains an explicit open decision** --
+neither 4096 nor 8192 is approved for full training (see `PROJECT.md`).
 
 **Phase 1 -- reproducible training-data pipeline**
 - Loads the real `birdsql/bird23-train-filtered` dataset (6,601 rows / 69
@@ -60,7 +61,7 @@ yet** -- that is a manual step the user performs next.
   success rate) that are never conflated with official correctness.
 - R-VES is deferred until deployment hardware is fixed.
 
-**Phase 3 -- baseline inference infrastructure (IN PROGRESS)**
+**Phase 3 -- baseline inference infrastructure (COMPLETE)**
 - Implements a single Qwen3-4B-Instruct-2507 (untouched, 4-bit NF4) backend
   and a resumable runner that reads *only* the Phase 2 gold-free
   generation manifest.
@@ -73,19 +74,20 @@ yet** -- that is a manual step the user performs next.
 - **Real result (Kaggle)**: official EX 43.6, Soft-F1 47.6975, 500/500
   generated, 0 failures. See `docs/BASELINE.md` / `PROJECT.md`.
 
-**Phase 4 -- QLoRA smoke-test infrastructure (IN PROGRESS)**
+**Phase 4 -- QLoRA smoke test (COMPLETE)**
 - Reuses Phase 1's `train.jsonl` verbatim (prompt/completion/evidence
   dropout already baked in) -- never re-split or re-derived.
 - Explicit, unit-tested completion-only loss masking (prompt tokens
-  label `-100`, only gold-SQL completion tokens trainable).
-- A bounded-step smoke runner (`--max-train-examples`, `--max-steps`)
-  attaches a LoRA adapter to the same 4-bit NF4 base as the Phase 3
-  baseline, trains, saves the adapter, and verifies it reloads correctly
-  (not an accuracy evaluation -- BIRD Mini-Dev is untouched here).
-- `--token-profile` reports the real training-prompt token-length
-  distribution without ever auto-adjusting `max_seq_length`.
-- **No training has been run yet** -- that's a manual step on a
-  cloud/Kaggle CUDA machine (see `docs/TRAINING.md`).
+  label `-100`, only gold-SQL completion tokens trainable) -- validated
+  with 0 prefix mismatches against the real Qwen tokenizer over all 6,067
+  training examples.
+- **Real Kaggle result**: 200-example/20-step smoke run, all steps
+  completed, final loss 0.410, peak GPU memory 11,550.2 MB, adapter saved
+  and reload-verified. See `docs/TRAINING.md` / `PROJECT.md`.
+- **Real token profile (6,067 examples)**: 1,398 (~23%) exceed 4096
+  tokens, 539 (~8.9%) exceed 8192, concentrated in 2 schema-heavy
+  databases. **Neither limit is approved for Phase 5 full training** --
+  the context-length/schema strategy is an explicit open decision.
 
 No actual training run or application code exists yet.
 
