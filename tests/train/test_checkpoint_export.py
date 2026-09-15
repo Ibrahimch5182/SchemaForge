@@ -10,6 +10,7 @@ recorded SHA256.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -368,6 +369,82 @@ def test_render_resume_instructions_includes_key_fields():
     assert "--resume-from-checkpoint" in text
     assert "training_data.jsonl" in text
     assert "Qwen/Qwen3-4B-Instruct-2507" in text
+
+
+def test_export_checkpoint_script_snapshots_the_override_train_file_from_run_config(tmp_path):
+    """End-to-end regression for the --input plumbing bug: when a run's
+    run_config.json.train_file is a Phase 5B certification override (not
+    the default Phase 1 train.jsonl), scripts/export_checkpoint.py must
+    snapshot THAT exact file as training_data.jsonl -- proving the
+    --input fix's effect reaches the durable export, not just
+    run_config.json. Skips cleanly if this dev environment hasn't
+    generated data/processed_phase5_candidate/policy.json yet (CI-safe)."""
+    import hashlib
+    import importlib.util
+    import sys as _sys
+
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / "data" / "processed_phase5_candidate" / "policy.json").exists():
+        return
+
+    export_script_path = repo_root / "scripts" / "export_checkpoint.py"
+    spec = importlib.util.spec_from_file_location("export_checkpoint_under_test", export_script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    override_train_file = tmp_path / "override_input" / "longest_16.jsonl"
+    override_train_file.parent.mkdir(parents=True)
+    override_train_file.write_text('{"example_id": "cert:0000", "prompt": "p", "completion": "c"}\n', encoding="utf-8")
+    train_file_sha256 = hashlib.sha256(override_train_file.read_bytes()).hexdigest()
+
+    runs_dir = tmp_path / "runs"
+    run_dir = runs_dir / "phase5b-mem-cert"
+    checkpoint_dir = run_dir / "checkpoint" / "checkpoint-2"
+    checkpoint_dir.mkdir(parents=True)
+    for name, content in {
+        "adapter_model.safetensors": b"lora",
+        "adapter_config.json": b"{}",
+        "optimizer.pt": b"opt",
+        "scheduler.pt": b"sched",
+        "rng_state.pth": b"rng",
+        "trainer_state.json": b'{"global_step": 2}',
+        "training_args.bin": b"args",
+    }.items():
+        (checkpoint_dir / name).write_bytes(content)
+
+    run_config = {
+        "run_id": "phase5b-mem-cert",
+        "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+        "resolved_revision": "abc",
+        "train_file": str(override_train_file),
+        "train_file_sha256": train_file_sha256,
+        "max_seq_length": 4096,
+        "save_steps": 1,
+        "save_total_limit": 2,
+    }
+    (run_dir / "run_config.json").write_text(json.dumps(run_config), encoding="utf-8")
+
+    out_dir = tmp_path / "exports"
+    old_argv = _sys.argv
+    _sys.argv = [
+        "export_checkpoint.py",
+        "--run-id",
+        "phase5b-mem-cert",
+        "--runs-dir",
+        str(runs_dir),
+        "--out-dir",
+        str(out_dir),
+        "--source-revision",
+        "testcommit",
+    ]
+    try:
+        module.main()
+    finally:
+        _sys.argv = old_argv
+
+    exported = out_dir / "phase5b-mem-cert__checkpoint-2" / "training_data.jsonl"
+    assert exported.exists()
+    assert exported.read_bytes() == override_train_file.read_bytes()
 
 
 def test_render_resume_instructions_handles_missing_source_revision():

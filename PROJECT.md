@@ -1380,6 +1380,39 @@ issues corrected before commit:
    writing anything, still explicitly excluding full base-model weights
    (allow-list + size-cap safety net).
 
+### Blocking Integration Bug -- `--input` Never Reached Training (Kaggle-Discovered, Fixed)
+
+The first real Kaggle attempt at the memory-certification command failed
+before model loading:
+
+```
+BLOCKER: training file not found: /kaggle/working/localsql/data/processed/train.jsonl
+```
+
+**Root cause**: `main()`'s actual training path called `load_examples(cfg,
+REPO_ROOT, args.max_train_examples)` directly -- unconditionally
+resolving `configs/train.yaml`'s `data.train_file`
+(`data/processed/train.jsonl`) and never even looking at `args.input`.
+Only the `--token-profile` branch had ever been wired to honor `--input`;
+the actual training/certification path was silently stuck on the Phase 1
+default the entire time. **Fix**: both branches now call a single new
+`resolve_train_examples(cfg, repo_root, explicit_input, limit)` --
+`--input`, when given, is validated (BLOCKER on that exact path if
+missing) and loaded BEFORE `cfg.data.train_file` is ever touched, for
+BOTH `--token-profile` and real training; without `--input`, behavior is
+byte-for-byte unchanged. The resolved path flows unchanged into
+`run_smoke_training`'s `train_path` parameter, so `run_config.json`'s
+`train_file`/`train_file_sha256` -- and therefore
+`scripts/export_checkpoint.py`'s training-data snapshot, which reads
+those fields -- automatically reflect the override with no further
+changes needed. `configs/train.yaml` was not touched, and no
+certification JSONL was copied/renamed into `data/processed/train.jsonl`.
+See `tests/train/test_runner_contracts.py` (override bypasses default,
+missing-input BLOCKERs on that path, no-input behavior preserved,
+structural guard against a future edit re-splitting the two branches) and
+`tests/train/test_checkpoint_export.py`'s end-to-end
+`test_export_checkpoint_script_snapshots_the_override_train_file_from_run_config`.
+
 ### Exact Kaggle Commands (not yet executed)
 
 GPU memory certification (16 longest examples, exact intended config;

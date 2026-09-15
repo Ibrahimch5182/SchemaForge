@@ -64,6 +64,122 @@ def test_load_examples_only_reads_configured_train_file(tmp_path):
     assert resolved_path == train_path
 
 
+def test_resolve_train_examples_input_override_bypasses_default_train_file(tmp_path):
+    """Regression for a real Kaggle failure: `--input
+    data/certification/longest_16.jsonl` still resolved
+    `configs/train.yaml`'s `data.train_file` and failed with 'training
+    file not found: .../data/processed/train.jsonl' -- proof --input was
+    honored only by --token-profile, never by the actual training path.
+    `resolve_train_examples` must use --input for BOTH modes and never
+    touch cfg.data.train_file when --input is given."""
+    module = _load_runner_module()
+
+    override_path = tmp_path / "certification.jsonl"
+    override_path.write_text(
+        json.dumps(
+            {
+                "example_id": "cert:0000",
+                "prompt": "p",
+                "completion": "c",
+                "db_id": "d",
+                "representation": "canonical_unchanged",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _FakeDataCfg:
+        # Deliberately a path that does NOT exist -- if resolve_train_examples
+        # ever touches this when --input is given, the test fails loudly
+        # (FileNotFoundError/BLOCKER) instead of silently succeeding.
+        train_file = "data/processed/does_not_exist_train.jsonl"
+
+    class _FakeCfg:
+        data = _FakeDataCfg()
+
+    examples, effective_path = module.resolve_train_examples(_FakeCfg(), tmp_path, override_path, limit=None)
+
+    assert effective_path == override_path
+    assert len(examples) == 1
+    assert examples[0].example_id == "cert:0000"
+
+
+def test_resolve_train_examples_missing_explicit_input_fails_on_that_path_not_default(tmp_path, capsys):
+    """A typo'd/missing --input must BLOCKER naming the --input path
+    itself, never silently falling back to (or complaining about) the
+    default config.train_file."""
+    import pytest
+
+    module = _load_runner_module()
+    missing_path = tmp_path / "does_not_exist_certification.jsonl"
+
+    class _FakeDataCfg:
+        train_file = "data/processed/train.jsonl"
+
+    class _FakeCfg:
+        data = _FakeDataCfg()
+
+    with pytest.raises(SystemExit):
+        module.resolve_train_examples(_FakeCfg(), tmp_path, missing_path, limit=None)
+
+    captured = capsys.readouterr()
+    assert str(missing_path) in captured.out
+    assert "data/processed/train.jsonl" not in captured.out
+
+
+def test_resolve_train_examples_without_input_preserves_default_behavior(tmp_path):
+    """No --input given: behavior is byte-for-byte the same as the
+    pre-fix load_examples path (Phase 1 train.jsonl, split=='train'
+    filter) -- the fix must not change default-path behavior at all."""
+    module = _load_runner_module()
+    from tests.train.fixtures import make_prepared_example
+
+    train_path = tmp_path / "train.jsonl"
+    examples = [make_prepared_example(0), make_prepared_example(1, split="validation")]
+    with train_path.open("w", encoding="utf-8") as f:
+        for ex in examples:
+            f.write(ex.model_dump_json() + "\n")
+
+    class _FakeDataCfg:
+        train_file = str(train_path.relative_to(tmp_path))
+
+    class _FakeCfg:
+        data = _FakeDataCfg()
+
+    loaded, resolved_path = module.resolve_train_examples(_FakeCfg(), tmp_path, None, limit=None)
+
+    assert len(loaded) == 1
+    assert loaded[0].split == "train"
+    assert resolved_path == train_path
+
+
+def test_main_uses_resolve_train_examples_for_both_token_profile_and_training_paths():
+    """Structural regression guard: main() must call resolve_train_examples
+    for BOTH the --token-profile branch and the actual training/dry-run
+    branch -- the original bug was exactly that only one branch honored
+    --input. Guards against a future edit reintroducing a bare
+    load_examples(cfg, REPO_ROOT, ...) call in main() that bypasses the
+    override."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    main_body = source.split("def main() -> None:", 1)[1]
+    assert main_body.count("resolve_train_examples(cfg, REPO_ROOT, args.input, args.max_train_examples)") == 2
+    assert "load_examples(cfg, REPO_ROOT, args.max_train_examples)" not in main_body
+
+
+def test_run_config_train_file_fields_come_from_resolved_train_path_parameter():
+    """run_config.json's train_file/train_file_sha256 -- and therefore the
+    durable checkpoint export's training-data snapshot, which reads them
+    -- must be derived from the `train_path` parameter passed into
+    run_smoke_training (the resolved effective path from
+    resolve_train_examples), never re-derived from cfg.data.train_file."""
+    source = RUNNER_PATH.read_text(encoding="utf-8")
+    assert '"train_file": str(train_path),' in source
+    assert '"train_file_sha256": file_sha256(train_path),' in source
+    training_fn_source = source.split("def run_smoke_training(", 1)[1].split("\ndef run_verify_adapter", 1)[0]
+    assert "cfg.data.train_file" not in training_fn_source
+
+
 def test_write_adapter_verification_persists_standalone_json_file(tmp_path):
     """Regression for the missing-artifact bug: a real successful smoke run
     (qlora-smoke-1-alloc-retry) embedded `adapter_verification` correctly

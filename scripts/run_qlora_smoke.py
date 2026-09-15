@@ -103,6 +103,34 @@ def load_examples(cfg, repo_root: Path, limit: int | None):
     return examples, train_path
 
 
+def resolve_train_examples(cfg, repo_root: Path, explicit_input: Path | None, limit: int | None):
+    """Resolve the effective training dataset for BOTH `--token-profile`
+    AND actual QLoRA training/certification runs.
+
+    Bug fix: `--input` was previously honored only by the `--token-profile`
+    branch of `main()` -- the actual training path called `load_examples`
+    directly and always resolved `configs/train.yaml`'s `data.train_file`,
+    silently ignoring `--input`. A real Kaggle certification run
+    (`--input data/certification/longest_16.jsonl`) failed with "training
+    file not found: .../data/processed/train.jsonl" -- proof the override
+    never reached the training path. This function is now the SOLE example
+    loader `main()` calls for both modes, so `--input` cannot regress back
+    into being token-profile-only again.
+
+    `--input`, when given, is the DEFINITIVE override: validated (BLOCKER
+    on that exact path if missing -- never silently falling through to the
+    default) and loaded BEFORE `cfg.data.train_file` is ever touched.
+    Without `--input`, behavior is unchanged: `load_examples` resolves and
+    validates `cfg.data.train_file` exactly as before.
+    """
+    if explicit_input is not None:
+        if not explicit_input.exists():
+            print(f"BLOCKER: --input file not found: {explicit_input}")
+            sys.exit(1)
+        return load_arbitrary_jsonl_for_profiling(explicit_input, limit)
+    return load_examples(cfg, repo_root, limit)
+
+
 def load_arbitrary_jsonl_for_profiling(path: Path, limit: int | None):
     """Load ANY JSONL with `example_id`/`prompt`/`completion` fields for
     `--token-profile` -- Phase 1's `train.jsonl`/`validation.jsonl`, or a
@@ -537,17 +565,18 @@ def main() -> None:
         return
 
     if args.token_profile:
-        if args.input:
-            examples, input_path = load_arbitrary_jsonl_for_profiling(args.input, args.max_train_examples)
-        else:
-            examples, input_path = load_examples(cfg, REPO_ROOT, args.max_train_examples)
+        examples, input_path = resolve_train_examples(cfg, REPO_ROOT, args.input, args.max_train_examples)
         if not examples:
             print("BLOCKER: no examples to profile after applying --max-train-examples.")
             sys.exit(1)
         run_token_profile(cfg, examples, run_dir, input_path, profile_name=input_path.stem, top_n_manifest=args.top_n_manifest)
         return
 
-    examples, train_path = load_examples(cfg, REPO_ROOT, args.max_train_examples)
+    # Same resolver as --token-profile above: --input (e.g. a Phase 5B
+    # certification JSONL) is the effective training dataset for the real
+    # QLoRA training/dry-run path too -- never silently overridden back to
+    # configs/train.yaml's data.train_file when --input was given.
+    examples, train_path = resolve_train_examples(cfg, REPO_ROOT, args.input, args.max_train_examples)
     if not examples:
         print("BLOCKER: no training examples after applying --max-train-examples.")
         sys.exit(1)
