@@ -8,6 +8,17 @@ to be compared against. **No training happens in this phase.**
 Qwen3-4B base  vs  Qwen3-4B + LocalSQL QLoRA   (comparison enabled by this phase)
 ```
 
+## Result (Kaggle, real run)
+
+**Official EX = 43.6, official Soft-F1 = 47.6975** (unmodified Phase 2
+evaluator; archive-canonical gold; 30s timeout unchanged; Phase 2's own
+oracle ceiling on this environment stays 99.6%). 500/500 examples
+generated, 0 generation failures, 0 OOM. Resolved model/tokenizer
+revision `cdbee75f17c01a7cc42f958dc650907174af0554`. Full configuration,
+runtime/VRAM metrics, token-profile stats, and output-format diagnostics
+are recorded in `PROJECT.md` (Phase 3) and in the run's own
+`data/runs/<run-id>/summary.json`.
+
 ## Why the untouched base model
 
 `Qwen/Qwen3-4B-Instruct-2507` is used exactly as published -- no LoRA, no
@@ -64,6 +75,15 @@ The Qwen tokenizer's native chat template is the *only* model-specific
 layer -- no manually reconstructed special tokens, no chain-of-thought
 instructions (this Qwen3 variant is used non-thinking).
 
+**Real-hardware detail**: `apply_chat_template(..., tokenize=True,
+return_tensors="pt")` returns a `transformers.BatchEncoding` (dict-like,
+`input_ids` + `attention_mask`), not a bare tensor. Two bugs stemmed from
+this before the real Kaggle run: `count_prompt_tokens()` used `len()` on
+it (counting 2 dict keys instead of tokens) and `generate_one()` treated
+it as a tensor directly (`AttributeError`, failed the first smoke run).
+Both are fixed -- see `PROJECT.md` (Phase 3) for the full root-cause
+writeup and the regression tests in `tests/model/test_generation.py`.
+
 ## Context mode
 
 Primary Phase 3 benchmark: **`with_business_context`** -- Mini-Dev's BIRD
@@ -104,7 +124,8 @@ Prompts are never chopped. `--token-profile` mode loads only the tokenizer
 reports prompt-length statistics (min/median/p90/p95/max, counts above the
 configurable `warn_threshold`/`hard_limit` in `configs/model.yaml`) to
 inform later training sequence-length decisions -- it does not gate or
-modify this phase's generation run.
+modify this phase's generation run. Real full-500 profile: min 203, median
+930.5, p90 2322.7, p95 2368.05, max 2428; 0 prompts above 4096 or 8192.
 
 ## Resume / crash safety
 
@@ -140,5 +161,6 @@ uv run python scripts/evaluate_bird_minidev.py \
   --predictions data/runs/qwen3-4b-base-nf4/predictions.jsonl
 ```
 
-No Kaggle screenshots or results are included here -- the actual GPU run
-is performed by the user, not fabricated by this document.
+The GPU run itself was performed by the user on Kaggle, not by Claude;
+results above are transcribed from that run's actual output, not
+fabricated -- see `PROJECT.md` for the full writeup.

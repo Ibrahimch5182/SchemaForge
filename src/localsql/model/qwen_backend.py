@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from localsql.model.config import ModelConfig
-from localsql.model.generation import BackendGenerationResult, build_model_inputs
+from localsql.model.generation import BackendGenerationResult, build_model_inputs, count_input_tokens
 
 
 class CudaNotAvailableError(RuntimeError):
@@ -117,22 +117,36 @@ class QwenBackend:
 
     def count_prompt_tokens(self, canonical_prompt: str) -> int:
         """Token count of the fully chat-templated input (what the model
-        actually sees), for token-profile mode."""
-        input_ids = build_model_inputs(self._tokenizer, canonical_prompt)
-        return len(input_ids)
+        actually sees), for token-profile mode.
+
+        Bug fixed here: `apply_chat_template` can return a dict-like
+        `BatchEncoding` (keys `input_ids`, `attention_mask`); `len()` on
+        that counts 2 keys, not tokens. `count_input_tokens` handles every
+        return shape (dict, tensor, list) correctly.
+        """
+        encoded = build_model_inputs(self._tokenizer, canonical_prompt)
+        return count_input_tokens(encoded)
 
     def generate_one(self, prompt: str) -> BackendGenerationResult:
         import torch
 
         cfg = self.config
         device = next(self._model.parameters()).device
-        input_ids = build_model_inputs(self._tokenizer, prompt, return_tensors="pt").to(device)
+        # `apply_chat_template(..., return_tensors="pt")` returns a dict-like
+        # `BatchEncoding` (input_ids + attention_mask) on the real Qwen
+        # tokenizer, not a bare tensor. `.to(device)` still works on it
+        # (BatchEncoding moves every tensor value), but it must be unpacked
+        # (`**encoded`) into `model.generate`, and `input_ids` extracted by
+        # key for the token count -- treating it as a tensor directly raised
+        # `AttributeError` on the first real Kaggle run.
+        encoded = build_model_inputs(self._tokenizer, prompt, return_tensors="pt").to(device)
+        input_ids = encoded["input_ids"]
         input_len = input_ids.shape[-1]
 
         start = time.perf_counter()
         with torch.inference_mode():
             output_ids = self._model.generate(
-                input_ids,
+                **encoded,
                 max_new_tokens=cfg.generation.max_new_tokens,
                 do_sample=cfg.generation.do_sample,
                 pad_token_id=self._tokenizer.eos_token_id,

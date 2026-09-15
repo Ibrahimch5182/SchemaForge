@@ -352,8 +352,8 @@ real to be measured against.
 
 ## Phase 3 -- Baseline Inference
 
-**Status: IN PROGRESS -- baseline infrastructure implemented; full GPU
-baseline not yet run.**
+**Status: COMPLETE -- real Kaggle GPU baseline run (500/500) and official
+BIRD Mini-Dev evaluation obtained.**
 
 ### Goal
 
@@ -414,28 +414,146 @@ isolating the effect of fine-tuning.
   rather than silently trusting mutable `main`, so a run's provenance
   identifies exactly which model files produced it.
 
+### Two BatchEncoding Bugs Found on Real Kaggle Hardware
+
+Both root causes are the same underlying surprise: the real Qwen tokenizer's
+`apply_chat_template(..., tokenize=True, add_generation_prompt=True,
+return_tensors="pt")` returns a `transformers.BatchEncoding` -- a dict-like
+object with `input_ids` and `attention_mask` keys -- not a bare tensor. This
+machine's fake-tokenizer unit tests didn't reproduce that shape until fixed,
+which is exactly why the real Kaggle run was still worth doing even after
+"passing" local tests.
+
+- **Bug #1 -- token-profiler undercount.** `--token-profile` used
+  `len(encoded)` on the `apply_chat_template(...)` result. `len()` on a
+  `BatchEncoding` counts its 2 keys, not tokens, so every prompt was
+  reported as 2 tokens regardless of actual length. Fixed with an explicit
+  `count_input_tokens()` helper (`src/localsql/model/generation.py`) that
+  reads the real token dimension whether given a `BatchEncoding`/dict, a
+  tensor `[batch, sequence]`, or a plain list. Verified against the real
+  corrected profile below.
+- **Bug #2 -- generation crash.** `generate_one()` treated the same
+  `apply_chat_template(..., return_tensors="pt")` result as a bare tensor:
+  `input_ids.shape[-1]` and `model.generate(input_ids, ...)`. Against the
+  real tokenizer this raised `AttributeError` (a `BatchEncoding` has no
+  `.shape`), failing all 5 examples of the first Kaggle smoke run. Fixed
+  by extracting `encoded["input_ids"]` for the token count and unpacking
+  the encoding by keyword into `model.generate(**encoded, ...)` (mirrors
+  the exact correction validated on Kaggle: smoke-v2 generated 5/5, the
+  canonical run generated 500/500). A regression test injects a fake
+  `torch` module so the real `generate_one()` code path runs and is
+  proven to raise the original `AttributeError` without the fix, and to
+  pass with it.
+
+**Lesson**: a fake/mocked tokenizer in local tests can hide a real
+library's actual return-type behavior. Both fixes replaced ad hoc
+attribute access with either an explicit shape-handling helper or exact
+dict-style access -- proven end-to-end on real Kaggle hardware, not just
+inferred from documentation.
+
+### Canonical Baseline Run (Kaggle)
+
+**Configuration** (unchanged from `configs/model.yaml`, none of these were
+altered to produce this result): `Qwen/Qwen3-4B-Instruct-2507`, resolved
+model/tokenizer revision `cdbee75f17c01a7cc42f958dc650907174af0554`; 4-bit
+NF4, double quantization, float16 compute, single Tesla T4, batch size 1;
+greedy decoding (`do_sample=false`), `max_new_tokens=512`, seed 42,
+`context_mode=with_business_context`; `predicted_sql =
+raw_completion.strip()` only -- no repair, no cleanup, no fallback.
+
+**Generation result**: 500/500 examples generated, 0 generation failures,
+0 OOM failures. Output-format diagnostics over all 500: 500 `status=ok`,
+0 markdown fences, 500 start with `SELECT`/`WITH` (500 specifically with
+`SELECT`), 0 empty predictions, 0 hit the 512-token generation ceiling,
+and `raw_completion == predicted_sql` for all 500 (the untuned model never
+produced prose/fences that `.strip()`-only normalization would have had to
+pass through visibly broken -- a stronger instruction-following result
+than assumed going in).
+
+**Runtime**: total 3045.86s; latency median 5576.76 ms, p90 8890.7 ms,
+p95 9981.84 ms, max 34239.53 ms; peak GPU memory 4773.4 MB (of 14911.7 MB
+reported total on the T4).
+
+**Corrected prompt-token profile** (full 500, post Bug #1 fix): min 203,
+median 930.5, p90 2322.7, p95 2368.05, max 2428; 0 prompts above 4096, 0
+above 8192 -- no truncation risk, comfortably informs later training
+sequence-length choices. **Output-token profile**: min 9, median 53, p90
+88.1, p95 106.05, max 416 (max stays under the 512 ceiling).
+
+**Provenance**: Python 3.12.13, torch 2.10.0+cu128, transformers 5.17.0,
+bitsandbytes 0.50.2, CUDA runtime 12.8, GPU Tesla T4.
+
+### Official BIRD Mini-Dev Evaluation of the Untuned Baseline
+
+Scored with the same unmodified, pinned-commit official evaluator and the
+same Phase 2 methodology used for oracle sanity -- archive
+`mini_dev_sqlite_gold.sql` as canonical grading truth, 30-second timeout
+unchanged, EX primary / Soft-F1 secondary:
+
+- **Official EX = 43.6**
+- **Official Soft-F1 = 47.6975**
+- Phase 2's own oracle ceiling on this environment remains **99.6** (the
+  two canonical gold-query 30-second timeouts, `bird-mini-dev-sqlite-0340`
+  and `-0393`, are a fixed property of the benchmark/hardware, independent
+  of any model).
+
+So the untouched base model resolves roughly 44% of Mini-Dev correctly
+end-to-end, despite near-perfect SQL-only instruction-following (500/500
+well-formed `SELECT`/`WITH` predictions, 0 markdown, 0 empty) -- meaning
+the gap to the 99.6% ceiling is almost entirely query *correctness*, not
+output-format violations. That is precisely the kind of headroom a
+fine-tuning phase would aim to close, and precisely why this number needed
+to exist before fine-tuning was considered.
+
+### Evaluator Dependency Note
+
+Running the official evaluator requires `func_timeout`, `pymysql`, and
+`psycopg2-binary` at import time (the vendored, unmodified
+`evaluation_utils.py` imports all three unconditionally even though only
+SQLite is evaluated here). These are already declared in `pyproject.toml`
+as the optional `eval` dependency group (added during Phase 2) --
+`uv sync --group eval` installs exactly what's needed, so a fresh
+environment does not need ad hoc `uv run --with func-timeout --with
+psycopg2-binary --with pymysql` flags. Re-verified working in this phase.
+
 ### Issues / Technical Debt
 
-- The real baseline run, its accuracy numbers, and any token-profile
-  results do not exist yet -- this section will be updated once the user
-  supplies them.
-- The `without_business_context` ablation is architected (
-  `resolve_generation_example`) but intentionally not run in this phase,
-  to avoid a second 500-example GPU pass before it's needed.
+- The `without_business_context` ablation remains architected
+  (`resolve_generation_example`) but not run -- no second 500-example GPU
+  pass was performed in this phase.
+- 43.6% EX is a first data point, not yet decomposed by difficulty/database
+  -- that breakdown is available in the Phase 2 evaluator's report output
+  (`by_difficulty`/`by_database`) if/when deeper baseline error analysis is
+  wanted, but doing that analysis was out of scope for this closeout.
 
 ### What We Learned
 
-(To be completed once the real baseline run's results are available.)
+Two BatchEncoding-shape bugs (profiler undercount, generation crash) only
+surfaced against the *real* Qwen tokenizer, not the fake tokenizers used in
+local unit tests -- confirming the project's own `--dry-run`-first,
+GPU-run-second design was the right call: cheap local tests caught
+structural issues (gold isolation, resume logic, contract shape), while
+the expensive real run caught library-behavior surprises that no amount of
+additional mocking would have found without eventually just running the
+real thing. Separately: an untuned 4B instruct model can already follow
+the SQL-only output contract almost perfectly while still getting the
+*query* wrong most of the time -- output-format compliance and
+correctness are genuinely different problems, and this baseline cleanly
+separates them for the first time in this project.
 
 ### Outcome
 
-**IN PROGRESS.** Infrastructure implemented and tested (91 tests passing,
-Phases 1-3 combined, all without network/CUDA/model downloads); no model
-has been downloaded or run on this machine; the GPU baseline itself is
-pending the user's cloud run.
+**COMPLETE.** Both BatchEncoding bugs (token-profiler undercount,
+generation crash) found on real Kaggle hardware, fixed, and covered by
+regression tests (97 tests passing, Phases 1-3 combined, all without
+network/CUDA/model downloads on this machine). Canonical untuned-baseline
+result obtained: 500/500 generated, 0 failures, official EX 43.6, official
+Soft-F1 47.6975, against the unmodified Phase 2 evaluator and methodology
+(archive-canonical gold, 30s timeout, 99.6% oracle ceiling unchanged).
 
 ### What Comes Next
 
-Once the user supplies real baseline `predictions.jsonl` / evaluation
-results, this section will be updated with the actual numbers, and only
-then would a QLoRA fine-tuning phase be considered.
+A QLoRA fine-tuning phase, if and when explicitly authorized, now has a
+real, trustworthy number to be measured against: 43.6% EX / 47.6975
+Soft-F1 from the untouched `Qwen/Qwen3-4B-Instruct-2507` base model under
+the exact 4-bit NF4 representation fine-tuning would also use.

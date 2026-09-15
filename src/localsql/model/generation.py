@@ -47,6 +47,33 @@ def build_model_inputs(tokenizer: Any, canonical_prompt: str, **kwargs: Any) -> 
     )
 
 
+def count_input_tokens(encoded: Any) -> int:
+    """Count tokens in the sequence dimension of whatever
+    `tokenizer.apply_chat_template(..., tokenize=True)` returned.
+
+    `apply_chat_template` can return several shapes depending on the
+    `return_dict`/`return_tensors` arguments (and, empirically, the
+    installed transformers version's own defaults):
+
+    - a dict-like object (e.g. a `BatchEncoding`) with an `input_ids` key
+      -- `len(encoded)` on this counts dict KEYS (e.g. 2 for
+      `input_ids`+`attention_mask`), not tokens. This was the actual bug:
+      the token-profiler reported 2 tokens for every prompt.
+    - a PyTorch (or other) tensor shaped `[batch, sequence]` (or just
+      `[sequence]`) -- token count is the last dimension.
+    - a plain Python list of token ids (`tokenize=True`, no
+      `return_tensors`), or a batch-of-one nested list `[[...]]`.
+
+    No torch import needed: tensor-ness is duck-typed via `.shape`.
+    """
+    input_ids = encoded["input_ids"] if hasattr(encoded, "keys") else encoded
+    if hasattr(input_ids, "shape"):
+        return int(input_ids.shape[-1])
+    if isinstance(input_ids, list) and input_ids and isinstance(input_ids[0], list):
+        return len(input_ids[0])
+    return len(input_ids)
+
+
 def resolve_generation_example(example: GenerationExample, context_mode: str) -> GenerationExample:
     """Return the example to actually generate from, for the given context mode.
 

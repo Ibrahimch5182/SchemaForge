@@ -29,6 +29,98 @@ def make_example(idx: int = 0, db_id: str = "shop_db") -> GenerationExample:
     )
 
 
+class FakeTensor:
+    """Duck-types a torch tensor's `.shape` for [batch, sequence] checks
+    without requiring torch to be installed."""
+
+    def __init__(self, shape: tuple[int, ...]):
+        self.shape = shape
+
+
+class FakeBatchEncoding(dict):
+    """Reproduces the real `transformers.BatchEncoding` shape that caused
+    the bug: a dict-like object with `input_ids`/`attention_mask` keys,
+    where `len(encoding) == 2` (the key count), not the token count.
+    """
+
+
+class FakeGenTensor:
+    """Minimal tensor-like double: indexing/slicing + `.shape` + `.to()`."""
+
+    def __init__(self, data: list):
+        self.data = data
+
+    def __getitem__(self, item):
+        result = self.data[item]
+        return FakeGenTensor(result) if isinstance(result, list) else result
+
+    @property
+    def shape(self):
+        dims = []
+        node = self.data
+        while isinstance(node, list):
+            dims.append(len(node))
+            node = node[0] if node else None
+        return tuple(dims)
+
+    def to(self, device):
+        return self
+
+
+class FakeGenBatchEncoding(dict):
+    """BatchEncoding double: dict-like, with `.to(device)` returning self
+    (matching the real `BatchEncoding.to()`, which moves each tensor value
+    and returns itself) -- NOT a bare tensor."""
+
+    def to(self, device):
+        return self
+
+
+class FakeParam:
+    device = "cpu"
+
+
+class FakeGenTokenizer:
+    """Reproduces the real Qwen tokenizer's `apply_chat_template(...,
+    return_tensors="pt")` behavior: returns a `BatchEncoding`, not a tensor.
+    """
+
+    eos_token_id = 999
+
+    def __init__(self, input_ids: list[int]):
+        self._input_ids = input_ids
+
+    def apply_chat_template(self, messages, tokenize=True, add_generation_prompt=True, **kwargs):
+        return FakeGenBatchEncoding(
+            input_ids=FakeGenTensor([list(self._input_ids)]),
+            attention_mask=FakeGenTensor([[1] * len(self._input_ids)]),
+        )
+
+    def decode(self, tokens, skip_special_tokens=True):
+        return "SELECT 1"
+
+
+class FakeGenModel:
+    """Records exactly how `.generate(...)` was called, to prove the
+    BatchEncoding is unpacked by keyword, not passed as a raw tensor."""
+
+    def __init__(self, new_token_count: int = 3):
+        self.new_token_count = new_token_count
+        self.last_generate_kwargs: dict | None = None
+
+    def parameters(self):
+        yield FakeParam()
+
+    def eval(self):
+        pass
+
+    def generate(self, **kwargs):
+        self.last_generate_kwargs = kwargs
+        input_ids = kwargs["input_ids"]
+        full_sequence = input_ids.data[0] + list(range(900, 900 + self.new_token_count))
+        return FakeGenTensor([full_sequence])
+
+
 class FakeTokenizer:
     """Records the exact call made to `apply_chat_template`."""
 
