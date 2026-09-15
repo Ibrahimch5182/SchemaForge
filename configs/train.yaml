@@ -1,0 +1,67 @@
+# LocalSQL Phase 4 QLoRA smoke-test configuration.
+# All training constants live here rather than scattered in Python.
+#
+# This is a SMOKE TEST config: proving the QLoRA training path works end to
+# end on a tiny subset / bounded step count on Kaggle/T4. It is NOT the
+# full-experiment training run. Full-experiment tuning (epochs, LR
+# schedule, final max_seq_length) is a later decision, made only after
+# reviewing real evidence (this smoke run + the train token profile).
+
+model:
+  # Same locked base model as Phase 3 -- untouched weights, LoRA adapter only.
+  id: Qwen/Qwen3-4B-Instruct-2507
+  revision: null  # resolved + pinned at run time, same as Phase 3
+
+runtime:
+  # Same 4-bit representation as the Phase 3 baseline, so a future
+  # base-vs-adapter comparison isolates the effect of fine-tuning.
+  load_in_4bit: true
+  quantization: nf4
+  double_quant: true
+  compute_dtype: float16
+  device: cuda
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+  task_type: CAUSAL_LM
+
+optimization:
+  per_device_train_batch_size: 1
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-4
+  # Planned FULL-experiment epoch count -- NOT what the smoke test runs.
+  # The smoke test is bounded by --max-steps / --max-train-examples instead.
+  planned_full_experiment_epochs: 2
+  warmup_ratio: 0.05
+  gradient_checkpointing: true
+  optim: paged_adamw_8bit
+  seed: 42
+
+sequence:
+  # PROVISIONAL. Not yet justified by the real training-prompt token
+  # profile. Run `--token-profile` against the real 6,067 training
+  # examples with the resolved Qwen tokenizer before treating this as
+  # final -- do not auto-adjust it from that profile without review.
+  max_seq_length: 4096
+
+loss:
+  # Completion-only: prompt/user tokens get label -100, only assistant SQL
+  # tokens are trainable. Implemented explicitly (localsql.train.sft_data),
+  # not left to an SFT framework's default/ambiguous behavior.
+  completion_only: true
+
+data:
+  # Reuses Phase 1's prepared artifacts verbatim -- prompt/completion and
+  # the evidence-dropout decision already baked in. Never re-split here.
+  train_file: data/processed/train.jsonl
+  validation_file: data/processed/validation.jsonl
+
+token_profile:
+  warn_threshold: 4096
+  hard_limit: 8192
+
+paths:
+  runs_dir: data/runs

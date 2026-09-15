@@ -12,14 +12,15 @@ executable read-only SQL query. Target model: `Qwen/Qwen3-4B-Instruct-2507`
 
 ## Current phase
 
-**Phase 3 IN PROGRESS: baseline-inference infrastructure implemented; the
-real GPU baseline run has not yet happened.** Phases 1 (training-data
-pipeline) and 2 (external BIRD Mini-Dev evaluation) are complete. No
-fine-tuning/training, no application code exists yet. See `PROJECT.md` for
-the full chronological engineering journal. Do not implement later phases
-unless explicitly asked.
+**Phase 4 IN PROGRESS: QLoRA smoke-test infrastructure implemented; no
+real Kaggle GPU training run has happened yet.** Phases 1 (training-data
+pipeline), 2 (external BIRD Mini-Dev evaluation), and 3 (untuned baseline:
+real Kaggle run, official EX 43.6 / Soft-F1 47.6975) are complete. No
+actual training run and no application code exist yet. See `PROJECT.md`
+for the full chronological engineering journal. Do not implement later
+phases unless explicitly asked.
 
-## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`)
+## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`)
 
 ```
 BIRD --> prepare --> baseline --> QLoRA --> evaluate --> quantize   (future)
@@ -50,13 +51,15 @@ User question --> schema introspection --> fine-tuned model
    without explicit user instruction.
 7. Do not add dependencies casually. Stays on lightweight data-engineering
    deps (`huggingface_hub`, `pydantic`, `sqlglot`, `pyyaml`, `fsspec`,
-   `pytest`) by default, plus two optional groups: `eval`
+   `pytest`) by default, plus three optional groups: `eval`
    (`func_timeout`, `pymysql`, `psycopg2-binary` -- to import the official
-   BIRD evaluator) and `model` (`torch`, `transformers`, `accelerate`,
-   `bitsandbytes` -- Phase 3 baseline inference only, not installed on this
-   Windows machine; `localsql.model.*` uses lazy imports so it stays
-   importable without it). No `trl`/`peft`/LoRA until a training phase is
-   authorized.
+   BIRD evaluator), `model` (`torch`, `transformers`, `accelerate`,
+   `bitsandbytes` -- Phase 3 baseline inference), and `train` (`peft`,
+   `trl` only -- Phase 4 QLoRA; deliberately does not re-list torch/
+   transformers/accelerate/bitsandbytes, install alongside `model`, never
+   reinstall Kaggle's own torch build). Not installed on this Windows
+   machine; `localsql.model.*` and `localsql.train.*` use lazy imports so
+   both stay importable without them.
 8. Do not implement future phases early (no FastAPI, no frontend, no
    agents, no model download/training on this machine).
 9. The official BIRD Mini-Dev evaluator (`evaluation_ex.py`,
@@ -72,7 +75,19 @@ User question --> schema introspection --> fine-tuned model
     `predicted_sql` is `raw_completion.strip()` only, never repaired.
     `scripts/run_baseline.py` reads only the Phase 2 gold-free generation
     manifest -- never grading/gold files. The real GPU run happens on a
-    cloud/Kaggle CUDA machine, run by the user, not by Claude.
+    cloud/Kaggle CUDA machine, run by the user, not by Claude. Real result
+    (Kaggle, resolved revision `cdbee75f17c01a7cc42f958dc650907174af0554`):
+    official EX 43.6, Soft-F1 47.6975, 500/500 generated, 0 failures.
+11. Phase 4 QLoRA is a starting configuration, not a final one: LoRA
+    r=16/alpha=32/dropout=0.05 on all 7 attention+MLP projections,
+    completion-only loss (prompt tokens label -100, explicit and tested,
+    never an SFT framework's default), `max_seq_length=4096` explicitly
+    provisional until reviewed against the real training-prompt token
+    profile (`--token-profile`, never auto-applied). `scripts/
+    run_qlora_smoke.py` reads only Phase 1's `train.jsonl` -- never BIRD
+    Mini-Dev. Adapter-reload verification is a plumbing check, not an
+    accuracy evaluation; Mini-Dev scoring happens later, via the existing
+    Phase 2 evaluator, only once a real fine-tuned checkpoint exists.
 
 ## Environment note
 
@@ -91,8 +106,9 @@ on this machine (Windows wheels available).
 ```powershell
 # Environment setup (Python 3.11 via uv)
 uv sync
-uv sync --group eval    # only needed to run the official BIRD evaluator
-uv sync --group model   # only on a CUDA cloud machine, for the real baseline
+uv sync --group eval             # only needed to run the official BIRD evaluator
+uv sync --group model            # only on a CUDA cloud machine (baseline)
+uv sync --group model --group train  # only on a CUDA cloud machine (QLoRA smoke test)
 
 # Phase 1: inspect / prepare BIRD training data
 uv run python scripts/inspect_bird.py
@@ -107,6 +123,11 @@ uv run python scripts/evaluate_bird_minidev.py --oracle-sanity   # plumbing chec
 uv run python scripts/run_baseline.py --manifest data\benchmarks\bird_mini_dev\generation\manifest.jsonl --run-id qwen3-4b-base-nf4-smoke --dry-run --limit 5
 # Real run (cloud/Kaggle CUDA only): drop --dry-run/--limit
 
+# Phase 4: QLoRA smoke test (dry-run/token-profile work without CUDA where noted)
+uv run python scripts/run_qlora_smoke.py --run-id qlora-smoke-check --dry-run --max-train-examples 50
+# Real run (cloud/Kaggle CUDA only):
+#   uv run python scripts/run_qlora_smoke.py --run-id qlora-smoke-1 --max-train-examples 200 --max-steps 20
+
 # Tests (no network required -- uses committed synthetic/sample fixtures)
 uv run pytest -q
 ```
@@ -120,11 +141,16 @@ uv run pytest -q
 - `docs/EVALUATION.md` -- Phase 2: BIRD Mini-Dev variant, gold isolation,
   prediction contract, evaluator integration.
 - `docs/BASELINE.md` -- Phase 3: baseline model/runtime rationale, prompt
-  envelope, resume/provenance design, cloud workflow.
-- `docs/ARCHITECTURE.md` -- full future architecture (training/app not yet
-  built).
+  envelope, resume/provenance design, cloud workflow, real results.
+- `docs/TRAINING.md` -- Phase 4: QLoRA smoke-test rationale, SFT
+  formatting, completion-only masking, token profiling, cloud workflow.
+- `docs/ARCHITECTURE.md` -- full future architecture (app/production not
+  yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.
 - `configs/benchmark.yaml` -- Phase 2 benchmark constants (source revisions,
   expected counts, metric config).
 - `configs/model.yaml` -- Phase 3 baseline model/runtime/generation
-  constants. Don't scatter magic numbers into Python.
+  constants.
+- `configs/train.yaml` -- Phase 4 QLoRA smoke-test constants (LoRA,
+  optimization, provisional max_seq_length). Don't scatter magic numbers
+  into Python.

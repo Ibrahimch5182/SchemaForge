@@ -27,6 +27,14 @@ model = [
     "accelerate>=1.0",
     "bitsandbytes>=0.44",
 ]
+# Phase 4 QLoRA smoke training. Deliberately does NOT list torch/
+# transformers/accelerate/bitsandbytes again -- those already come from the
+# "model" group, and Kaggle's own torch build should never be reinstalled.
+# Install both together: `uv sync --group model --group train`.
+train = [
+    "peft>=0.13",
+    "trl>=0.11",
+]
 
 [build-system]
 requires = ["hatchling"]

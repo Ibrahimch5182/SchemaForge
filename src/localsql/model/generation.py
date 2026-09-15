@@ -74,6 +74,22 @@ def count_input_tokens(encoded: Any) -> int:
     return len(input_ids)
 
 
+def extract_token_ids(encoded: Any) -> list[int]:
+    """Return the flat list of token ids from whatever
+    `tokenizer.apply_chat_template(..., tokenize=True)` returned.
+
+    Same input shapes as `count_input_tokens` (dict/`BatchEncoding`, tensor,
+    plain/batch-of-one list), but returns the actual ids -- needed by Phase 4
+    SFT encoding to build `input_ids`/`labels`, not just a count.
+    """
+    ids = encoded["input_ids"] if hasattr(encoded, "keys") else encoded
+    if hasattr(ids, "tolist"):  # torch/numpy tensor
+        ids = ids.tolist()
+    if isinstance(ids, list) and ids and isinstance(ids[0], list):
+        ids = ids[0]
+    return list(ids)
+
+
 def resolve_generation_example(example: GenerationExample, context_mode: str) -> GenerationExample:
     """Return the example to actually generate from, for the given context mode.
 

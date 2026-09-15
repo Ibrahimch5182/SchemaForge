@@ -29,7 +29,7 @@ def percentile(sorted_values: list[float], pct: float) -> float:
 
 def numeric_stats(values: list[float]) -> dict:
     if not values:
-        return {"count": 0, "min": None, "median": None, "p90": None, "p95": None, "max": None}
+        return {"count": 0, "min": None, "median": None, "p90": None, "p95": None, "p99": None, "max": None}
     s = sorted(values)
     return {
         "count": len(s),
@@ -37,6 +37,7 @@ def numeric_stats(values: list[float]) -> dict:
         "median": statistics.median(s),
         "p90": round(percentile(s, 90), 2),
         "p95": round(percentile(s, 95), 2),
+        "p99": round(percentile(s, 99), 2),
         "max": s[-1],
     }
 

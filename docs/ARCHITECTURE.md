@@ -1,10 +1,11 @@
 # LocalSQL Architecture (High Level)
 
 This document describes the intended end-to-end architecture across all
-phases. **Phase 1 (data foundation) and Phase 2 (external evaluation) are
-complete. Phase 3 (baseline inference infrastructure) is implemented but
-the real GPU baseline run has not happened yet.** Everything else below is
-a plan, not code. See `PROJECT.md` for the full chronological journal.
+phases. **Phases 1-3 are complete (Phase 3's real Kaggle baseline: official
+EX 43.6, Soft-F1 47.6975). Phase 4 (QLoRA smoke-test infrastructure) is
+implemented but no real Kaggle GPU training run has happened yet.**
+Everything else below is a plan, not code. See `PROJECT.md` for the full
+chronological journal.
 
 ## Offline ML pipeline (future phases)
 
@@ -14,15 +15,17 @@ BIRD (filtered train) --> prepare --> baseline eval --> QLoRA fine-tune --> eval
 
 - **prepare** (Phase 1, implemented): raw BIRD rows + official schema
   metadata -> canonical prompt/completion examples, split by `db_id`.
-- **baseline** (Phase 3, infrastructure implemented): run the untouched
-  `Qwen/Qwen3-4B-Instruct-2507` (4-bit NF4, matching the future QLoRA base
-  representation) against the canonical prompt contract to establish a
-  pre-fine-tuning reference point. The real GPU run happens on a
-  cloud/Kaggle CUDA machine, performed by the user -- not yet run.
-- **QLoRA fine-tune**: 4-bit QLoRA supervised fine-tuning of
-  `Qwen/Qwen3-4B-Instruct-2507` (or a smaller Qwen3-family fallback if
-  compute requires it) using Hugging Face Transformers + TRL + PEFT +
-  bitsandbytes, on the `train.jsonl` produced here.
+- **baseline** (Phase 3, complete): the untouched `Qwen/Qwen3-4B-Instruct-2507`
+  (4-bit NF4, matching the QLoRA base representation) against the canonical
+  prompt contract. Real Kaggle result: official EX 43.6, Soft-F1 47.6975,
+  500/500 generated.
+- **QLoRA fine-tune** (Phase 4, smoke-test infrastructure implemented, no
+  real run yet): 4-bit QLoRA supervised fine-tuning of
+  `Qwen/Qwen3-4B-Instruct-2507` using Hugging Face Transformers + PEFT +
+  bitsandbytes (TRL installed, not yet the training-loop driver -- see
+  `docs/TRAINING.md`) on Phase 1's `train.jsonl`, reused verbatim. A
+  smoke test (bounded steps/subset) validates the mechanics first; a
+  full-length run is a later, separate decision.
 - **evaluate** (Phase 2, implemented up to the scoring boundary): score
   future model predictions against BIRD Mini-Dev (original 500 SELECT-only
   SQLite, official EX/Soft-F1 evaluator) via the gold-free generation
@@ -83,8 +86,24 @@ without needing an agent loop.
   Qwen's own chat template; deterministic decoding; whitespace-only output
   normalization; full run provenance recording; a `--dry-run` mode and a
   `--token-profile` mode.
-- See `docs/BASELINE.md` for the full rationale and workflow.
+- See `docs/BASELINE.md` for the full rationale, workflow, and real results.
 
-Implementation of the training loop (QLoRA/TRL/PEFT), application
-backend/frontend, or any agent/RAG/orchestration layer is explicitly out of
-scope until a later phase is authorized.
+## What Phase 4 actually built (smoke-test infrastructure only -- no run yet)
+
+- QLoRA config (`src/localsql/train/config.py`), SFT data loading +
+  explicit, unit-tested completion-only label masking
+  (`src/localsql/train/sft_data.py`, reusing Phase 1's `train.jsonl`
+  verbatim), and a QLoRA backend (`src/localsql/train/qlora_backend.py`,
+  lazy torch/transformers/peft/bitsandbytes imports, plain HF `Trainer`
+  fed our own pre-masked labels, adapter save/reload, NaN/Inf loss
+  detection).
+- `scripts/run_qlora_smoke.py`: `--dry-run`, `--token-profile` (real
+  training-prompt + full-SFT-sequence token stats, never auto-applied to
+  `max_seq_length`), bounded smoke training (`--max-train-examples`,
+  `--max-steps`), and `--verify-adapter` (plumbing check only, not an
+  accuracy evaluation; BIRD Mini-Dev untouched).
+- See `docs/TRAINING.md` for the full rationale and workflow.
+
+Implementation of a full-length training run, application backend/frontend,
+or any agent/RAG/orchestration layer is explicitly out of scope until a
+later phase is authorized.

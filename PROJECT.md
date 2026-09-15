@@ -557,3 +557,168 @@ A QLoRA fine-tuning phase, if and when explicitly authorized, now has a
 real, trustworthy number to be measured against: 43.6% EX / 47.6975
 Soft-F1 from the untouched `Qwen/Qwen3-4B-Instruct-2507` base model under
 the exact 4-bit NF4 representation fine-tuning would also use.
+
+---
+
+## Phase 4 -- QLoRA Training Smoke Test
+
+**Status: IN PROGRESS -- smoke-test infrastructure implemented; no real
+Kaggle GPU training run has happened yet.**
+
+### Goal
+
+Prove the QLoRA training path (4-bit NF4 base, LoRA adapter, explicit
+completion-only loss) works correctly end to end -- on a small subset
+and/or a bounded number of optimizer steps on Kaggle/T4 -- before ever
+attempting a real, full-length fine-tuning run. This is infrastructure
+validation, not the fine-tuning experiment itself.
+
+### Why This Phase Was Necessary
+
+Phase 3 already demonstrated that "should work per the docs" and "actually
+works against the real library on real hardware" are different things
+(two BatchEncoding bugs, both invisible to local mocked tests). Training
+has a much larger blast radius than inference if something is silently
+wrong -- an incorrectly masked loss, for instance, could train the model to
+predict its own prompt tokens instead of SQL, and that failure mode
+produces a loss curve that still looks plausible. A smoke test that proves
+the mechanics (masking, 4-bit+LoRA load, gradient step, checkpoint save,
+adapter reload) are correct on a handful of examples is far cheaper than
+discovering a masking bug after a multi-hour full run.
+
+### Research Question This Phase Sets Up
+
+Can QLoRA specialization of Qwen3-4B materially improve Text-to-SQL
+accuracy on completely unseen database schemas (the 7 held-out validation
+DBs, and ultimately BIRD Mini-Dev) while remaining practical for local
+deployment? Phase 4 does not answer this -- it builds the infrastructure a
+later full training run would need to answer it, and proves that
+infrastructure isn't silently broken.
+
+### What Was Built
+
+- `configs/train.yaml`: centralized QLoRA smoke-test configuration --
+  same locked base model and 4-bit NF4 settings as the Phase 3 baseline
+  (so a future base-vs-adapter comparison isolates fine-tuning, not a
+  precision change); starting LoRA config (r=16, alpha=32, dropout=0.05,
+  all 7 attention/MLP target modules); starting optimization config
+  (batch size 1, grad accumulation 8, LR 1e-4, warmup 0.05, gradient
+  checkpointing, paged AdamW 8-bit, seed 42); `max_seq_length: 4096`
+  explicitly marked provisional, not to be treated as justified until
+  reviewed against the real training-prompt token profile.
+- `src/localsql/train/`: a config loader (no ML dependencies), `sft_data.py`
+  (reuses Phase 1's `train.jsonl` verbatim -- prompt/completion/evidence-
+  dropout decisions already baked in, never re-split or re-derived here --
+  plus an explicit, unit-tested completion-only label-masking function),
+  and `qlora_backend.py` (lazy torch/transformers/peft/bitsandbytes
+  imports, 4-bit load, LoRA attach, bounded-step training via plain HF
+  `Trainer` fed our own pre-masked labels, adapter save/reload, NaN/Inf
+  loss detection).
+- **Completion-only masking, explicit and tested**: two separate
+  `tokenizer.apply_chat_template` calls (user-only with
+  `add_generation_prompt=True`, and the full user+assistant conversation)
+  establish the exact prompt/completion boundary; everything before that
+  boundary gets label `-100`, everything at or after it (the gold SQL)
+  stays trainable. Padding also gets `-100`. Tests prove: prompt tokens
+  masked, completion tokens trainable and equal to the real token ids, at
+  least one trainable label exists, padding masked, and -- structurally,
+  since the prompt-length boundary is computed from a call that is never
+  given the completion text at all -- gold SQL cannot leak into what gets
+  masked as "prompt".
+- `scripts/run_qlora_smoke.py`: `--dry-run` (data/config validation, no
+  model/CUDA), `--token-profile` (tokenizer-only profiling of the real
+  training prompts *and* full prompt+completion SFT sequence length,
+  reported but never used to auto-adjust `max_seq_length`), bounded smoke
+  training (`--max-train-examples`, `--max-steps`), and
+  `--verify-adapter` (reload the saved adapter onto the base model,
+  confirm it's active, run one tiny sanity generation -- explicitly not an
+  accuracy evaluation, and BIRD Mini-Dev is never touched in this phase).
+- Reused, not reimplemented: the same `build_model_inputs` /
+  BatchEncoding-safe envelope construction fixed for the Phase 3 baseline
+  backend is reused for the adapter-verification sanity generation, so the
+  same `AttributeError` class of bug cannot recur there.
+- `pyproject.toml`'s new `train` dependency group adds only `peft` and
+  `trl` -- deliberately not re-listing `torch`/`transformers`/`accelerate`/
+  `bitsandbytes` (already in the `model` group), so installing it never
+  risks reinstalling Kaggle's own torch build.
+
+### Decisions and Reasoning
+
+- Plain HF `Trainer`, not `trl.SFTTrainer`, drives the actual training
+  loop: completion-only masking is fully computed by `sft_data.py` before
+  the trainer ever sees an example, so none of `SFTTrainer`'s own dataset
+  formatting/masking conveniences are needed, and its API surface varies
+  more across versions than `Trainer`'s. TRL itself is still an installed
+  dependency (per the task's request) for any later phase that wants it.
+- `max_seq_length` is treated as data, not doctrine: 4096 is a starting
+  number, explicitly labeled provisional in both the config file and the
+  token-profile report, and this phase deliberately does *not* auto-adjust
+  it -- that decision needs the real Kaggle tokenizer's profile of the
+  actual 6,067 training prompts (and full SFT sequences including the
+  completion) reviewed by a person first.
+- Examples whose full SFT sequence exceeds `max_seq_length` are skipped
+  and counted, never truncated -- truncating from the right could cut off
+  the gold SQL completion itself, which would be far worse than simply
+  excluding the example from this smoke run.
+- Adapter-reload verification is a plumbing check only, explicitly not an
+  accuracy evaluation, and BIRD Mini-Dev is not touched -- consistent with
+  Phase 2's evaluation boundary.
+
+### Issues / Technical Debt
+
+- No real GPU training has happened yet -- loss curves, adapter behavior,
+  peak memory, and the real token profile do not exist yet.
+- The `Trainer`-based training loop (`qlora_backend.train_smoke`) cannot be
+  exercised by local tests at all (no torch/CUDA on this machine, and
+  unlike Phase 3's `generate_one`, its logic is too training-stack-specific
+  to fake convincingly with a `sys.modules` torch stub) -- it is validated
+  only by real Kaggle execution, the same way both Phase 3 BatchEncoding
+  bugs were only ever found that way. A focused follow-up session should be
+  expected if the real run surfaces an integration bug, matching the
+  established pattern from Phase 3.
+- `build_sft_encoding`'s prompt/completion boundary logic assumes
+  `add_generation_prompt=True` produces an exact token-level *prefix* of
+  the full assistant-turn sequence -- true for ChatML-style templates
+  (which Qwen3 uses) and now unit-tested against a fake tokenizer built to
+  faithfully model that property, but not yet confirmed against the real
+  Qwen tokenizer. Worth a quick assertion during the first real smoke run.
+- `paged_adamw_8bit` requires bitsandbytes' optimizer support to actually
+  be available in the installed stack; if it isn't, `Trainer` will raise
+  clearly at training start (not silently fall back), which is the
+  intended fail-clearly behavior.
+
+### What We Learned
+
+(To be completed once the real Kaggle smoke run has happened.)
+
+### Outcome
+
+**IN PROGRESS.** Infrastructure implemented and tested (116 tests passing,
+Phases 1-4 combined, all without network/CUDA/model downloads on this
+machine); no model has been downloaded, trained, or run on this machine.
+Phase 4 is not complete from this implementation alone -- it requires a
+real Kaggle GPU smoke run and review of its results (loss behavior, peak
+memory, adapter reload check, and the real token profile) before Phase 4
+can be marked PASSED.
+
+### Acceptance Criteria for Marking Phase 4 Complete
+
+1. Real Kaggle smoke run completes without NaN/Inf loss or unhandled OOM.
+2. Loss is logged per step and looks like a real (if noisy, given the tiny
+   subset) training signal, not a flat/degenerate curve.
+3. LoRA adapter checkpoint saves successfully.
+4. Adapter-reload verification confirms the adapter is active and produces
+   a generation (still not an accuracy claim).
+5. Real training-prompt token profile (min/median/p90/p95/p99/max, counts
+   above 4096/8192) is obtained and reviewed against `max_seq_length=4096`
+   before any decision to change it.
+6. Peak GPU memory and full provenance are recorded in `summary.json`.
+
+### What Comes Next
+
+Once the user runs the real Kaggle smoke test and the results are
+reviewed against the acceptance criteria above, this section will be
+updated with the actual outcome. Only after Phase 4 is marked PASSED would
+a full-length QLoRA training run (not a smoke test) be considered --
+and that decision, including any changes to `max_seq_length` or the
+starting hyperparameters above, is explicitly deferred until then.
