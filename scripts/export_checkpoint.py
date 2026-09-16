@@ -9,8 +9,12 @@ RNG state, trainer_state.json, training arguments -- together with the
 EXACT training data JSONL that run used (byte-for-byte, SHA256-verified
 against what the run recorded), the exact training config,
 candidate-dataset policy/provenance, model/tokenizer revision, source
-revision (explicit/provenance-file/best-effort git), environment/library
-versions, and a SHA256 manifest, into one self-contained directory you
+revision (the RUN's own recorded revision from run_config.json/
+summary.json takes precedence -- see
+`localsql.train.provenance.resolve_run_source_revision` -- falling back
+to explicit/provenance-file/best-effort git ONLY if the run recorded
+none), environment/library versions, and a SHA256 manifest, into one
+self-contained directory you
 can copy anywhere (Kaggle Datasets, Drive, local disk) and later extract
 into a fresh, compatible environment. It deliberately never packages
 4-bit base model weights (see
@@ -48,7 +52,7 @@ from localsql.train.checkpoint_export import (  # noqa: E402
     render_resume_instructions,
     verify_training_data_snapshot,
 )
-from localsql.train.provenance import resolve_source_revision  # noqa: E402
+from localsql.train.provenance import resolve_run_source_revision  # noqa: E402
 
 CANDIDATE_POLICY_PATH = REPO_ROOT / "data" / "processed_phase5_candidate" / "policy.json"
 TRAIN_CONFIG_PATH = REPO_ROOT / "configs" / "train.yaml"
@@ -123,7 +127,14 @@ def main() -> None:
         print(f"BLOCKER: {e}")
         sys.exit(1)
 
-    export_source_revision = resolve_source_revision(args.source_revision, REPO_ROOT)
+    # RUN provenance: prefer the source revision the run itself recorded
+    # at training time (run_config.json, then summary.json) over
+    # re-resolving from the export environment -- a recorded run revision
+    # must never be silently replaced just because this export happens on
+    # a different machine/session or without --source-revision. The
+    # explicit-arg/provenance-file/git fallback is used ONLY when neither
+    # run artifact recorded a revision at all.
+    run_source_revision = resolve_run_source_revision(run_config, summary, args.source_revision, REPO_ROOT)
 
     export_name = f"{args.run_id}__{checkpoint_dir.name}"
     export_dir = args.out_dir / export_name
@@ -138,8 +149,8 @@ def main() -> None:
         max_seq_length=run_config.get("max_seq_length"),
         save_steps=run_config.get("save_steps"),
         save_total_limit=run_config.get("save_total_limit"),
-        source_revision=export_source_revision["source_revision"],
-        source_revision_origin=export_source_revision["source_revision_origin"],
+        source_revision=run_source_revision["source_revision"],
+        source_revision_origin=run_source_revision["source_revision_origin"],
     )
 
     extra_files = {
@@ -153,11 +164,14 @@ def main() -> None:
 
     training_time_provenance = (summary or {}).get("provenance", {})
     provenance = {
+        # The run's own identified source revision (see precedence above)
+        # -- this is what identifies the source code that produced this
+        # checkpoint, not necessarily this export's own environment.
+        "source_revision": run_source_revision["source_revision"],
+        "source_revision_origin": run_source_revision["source_revision_origin"],
         "training_time": training_time_provenance,
         "export_time": {
             "python_version": platform.python_version(),
-            "source_revision": export_source_revision["source_revision"],
-            "source_revision_origin": export_source_revision["source_revision_origin"],
         },
         "training_data": {
             "published_as": "training_data.jsonl",
@@ -186,8 +200,8 @@ def main() -> None:
     if manifest["excluded_checkpoint_files"]:
         print(f"  excluded checkpoint files (see MANIFEST.json for reasons): {len(manifest['excluded_checkpoint_files'])}")
     print(
-        f"  source revision: {export_source_revision['source_revision'] or 'unavailable'} "
-        f"(origin: {export_source_revision['source_revision_origin']})"
+        f"  source revision: {run_source_revision['source_revision'] or 'unavailable'} "
+        f"(origin: {run_source_revision['source_revision_origin']})"
     )
     print(f"\nWrote {export_dir / 'MANIFEST.json'} and {export_dir / 'RESUME_INSTRUCTIONS.md'}")
 

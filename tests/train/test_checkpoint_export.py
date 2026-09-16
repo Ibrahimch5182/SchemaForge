@@ -447,6 +447,94 @@ def test_export_checkpoint_script_snapshots_the_override_train_file_from_run_con
     assert exported.read_bytes() == override_train_file.read_bytes()
 
 
+def test_export_checkpoint_script_propagates_run_config_source_revision_end_to_end(tmp_path):
+    """Reproduces the exact reported bug: data/runs/phase5b-resume-cert-v2/
+    run_config.json recorded source_revision=
+    78b3dab4de70473b9afcab56d0156adb6daa7ab1 / source_revision_origin=
+    explicit_arg at training time, but a durable export run WITHOUT
+    --source-revision reported 'source revision: unavailable (origin:
+    unavailable)'. The export's MANIFEST.json must instead carry the
+    run's own recorded revision/origin. Skips cleanly if this dev
+    environment hasn't generated data/processed_phase5_candidate/
+    policy.json yet (CI-safe)."""
+    import hashlib
+    import importlib.util
+    import sys as _sys
+
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / "data" / "processed_phase5_candidate" / "policy.json").exists():
+        return
+
+    export_script_path = repo_root / "scripts" / "export_checkpoint.py"
+    spec = importlib.util.spec_from_file_location("export_checkpoint_under_test_2", export_script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    train_file = tmp_path / "input" / "longest_16.jsonl"
+    train_file.parent.mkdir(parents=True)
+    train_file.write_text('{"example_id": "cert:0000", "prompt": "p", "completion": "c"}\n', encoding="utf-8")
+    train_file_sha256 = hashlib.sha256(train_file.read_bytes()).hexdigest()
+
+    runs_dir = tmp_path / "runs"
+    run_dir = runs_dir / "phase5b-resume-cert-v2"
+    checkpoint_dir = run_dir / "checkpoint" / "checkpoint-8"
+    checkpoint_dir.mkdir(parents=True)
+    for name, content in {
+        "adapter_model.safetensors": b"lora",
+        "adapter_config.json": b"{}",
+        "optimizer.pt": b"opt",
+        "scheduler.pt": b"sched",
+        "rng_state.pth": b"rng",
+        "trainer_state.json": b'{"global_step": 8}',
+        "training_args.bin": b"args",
+    }.items():
+        (checkpoint_dir / name).write_bytes(content)
+
+    run_config_before = {
+        "run_id": "phase5b-resume-cert-v2",
+        "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+        "resolved_revision": "abc",
+        "train_file": str(train_file),
+        "train_file_sha256": train_file_sha256,
+        "max_seq_length": 4096,
+        "save_steps": 1,
+        "save_total_limit": 2,
+        "source_revision": "78b3dab4de70473b9afcab56d0156adb6daa7ab1",
+        "source_revision_origin": "explicit_arg",
+    }
+    run_config_path = run_dir / "run_config.json"
+    run_config_path.write_text(json.dumps(run_config_before), encoding="utf-8")
+    summary_path = run_dir / "summary.json"
+    summary_before = {"provenance": {"source_revision": "78b3dab4de70473b9afcab56d0156adb6daa7ab1", "source_revision_origin": "explicit_arg"}}
+    summary_path.write_text(json.dumps(summary_before), encoding="utf-8")
+
+    out_dir = tmp_path / "exports"
+    old_argv = _sys.argv
+    # Deliberately NO --source-revision passed at export time -- matching
+    # the real Kaggle command that produced "unavailable".
+    _sys.argv = [
+        "export_checkpoint.py",
+        "--run-id",
+        "phase5b-resume-cert-v2",
+        "--runs-dir",
+        str(runs_dir),
+        "--out-dir",
+        str(out_dir),
+    ]
+    try:
+        module.main()
+    finally:
+        _sys.argv = old_argv
+
+    manifest = json.loads((out_dir / "phase5b-resume-cert-v2__checkpoint-8" / "MANIFEST.json").read_text(encoding="utf-8"))
+    assert manifest["provenance"]["source_revision"] == "78b3dab4de70473b9afcab56d0156adb6daa7ab1"
+    assert manifest["provenance"]["source_revision_origin"] == "explicit_arg"
+
+    # Requirement 6: neither original artifact was mutated by the export.
+    assert json.loads(run_config_path.read_text(encoding="utf-8")) == run_config_before
+    assert json.loads(summary_path.read_text(encoding="utf-8")) == summary_before
+
+
 def test_render_resume_instructions_handles_missing_source_revision():
     text = render_resume_instructions(
         source_run_id="r",
