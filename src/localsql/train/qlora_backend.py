@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from localsql.train.config import TrainConfig
+from localsql.train.full_training import StopAfterGlobalStepState
 
 
 class CudaNotAvailableError(RuntimeError):
@@ -178,14 +179,37 @@ class QLoraBackend:
         self,
         encodings: list,
         output_dir: Path,
-        max_steps: int,
+        max_steps: int | None = None,
+        num_train_epochs: int | None = None,
+        stop_after_global_step: int | None = None,
         save_steps: int | None = None,
         save_total_limit: int | None = None,
         resume_from_checkpoint: str | None = None,
     ) -> dict:
-        """Bounded-step training over pre-masked `SftEncoding` examples --
-        used for the Phase 4 smoke test, and (with checkpointing enabled)
-        Phase 5B's memory/throughput certification and stop/resume runs.
+        """Training over pre-masked `SftEncoding` examples -- used for the
+        Phase 4 smoke test, Phase 5B's memory/throughput certification and
+        stop/resume runs, AND (via `num_train_epochs`/
+        `stop_after_global_step`) Phase 5C's canonical full-training runs.
+
+        Exactly one of `max_steps` (Phase 4/5B: a small bounded step
+        count) or `num_train_epochs` (Phase 5C: the canonical fixed
+        training horizon, e.g. 2) must be given -- never both. This is
+        deliberate: `transformers.TrainingArguments` silently lets
+        `max_steps > 0` override `num_train_epochs`, which would silently
+        break the canonical fixed scheduler horizon Phase 5C's
+        multi-session-equivalence requirement depends on.
+
+        `stop_after_global_step`, if given, requests a GRACEFUL early
+        training stop once `trainer.state.global_step` reaches it, via a
+        `TrainerCallback` that sets `control.should_training_stop = True`
+        and forces `control.should_save = True` on that same step (so a
+        resumable checkpoint always exists at the boundary, even if it
+        doesn't land on a `save_steps` multiple). It does NOT touch
+        `max_steps`/`num_train_epochs`/the LR scheduler's total-step
+        computation -- those stay fixed for every session, so a
+        multi-session run (stop, then resume with the SAME
+        `num_train_epochs`) is mathematically equivalent to one
+        uninterrupted run of that many epochs, never a re-shortened one.
 
         Checkpointing: `save_steps` enables HF `Trainer`'s own periodic
         checkpoint saves under `output_dir/checkpoint-<step>` (full
@@ -201,6 +225,18 @@ class QLoraBackend:
         (`torch.cuda.OutOfMemoryError` / RuntimeError) unmodified -- both
         stop the run rather than continuing on a corrupted state.
         """
+        # Checked BEFORE the heavy torch/transformers imports below so this
+        # validation is exercisable in a CPU/offline test environment that
+        # doesn't have the optional "model"/"train" dependency groups
+        # installed at all (this repo's Windows dev machine included).
+        if (max_steps is None) == (num_train_epochs is None):
+            raise ValueError(
+                "train_smoke requires exactly one of max_steps or num_train_epochs -- "
+                f"got max_steps={max_steps!r}, num_train_epochs={num_train_epochs!r}. Passing both would let "
+                "TrainingArguments' max_steps silently override num_train_epochs (breaking a canonical "
+                "fixed training horizon); passing neither leaves the horizon undefined."
+            )
+
         import torch
         from transformers import Trainer, TrainerCallback, TrainingArguments
 
@@ -243,13 +279,36 @@ class QLoraBackend:
                 if logs:
                     metrics_log.append(dict(logs))
 
+        class _StopAfterGlobalStepCallback(TrainerCallback):
+            """Requests a graceful stop once `state.global_step` reaches
+            `stop_step`, forcing a checkpoint save on that exact step
+            regardless of `save_steps` -- never touches max_steps/
+            num_train_epochs, so the scheduler's total-step horizon is
+            unaffected. Delegates its decision to
+            `StopAfterGlobalStepState` (CPU/offline unit-tested) rather
+            than duplicating the comparison here."""
+
+            def __init__(self, stop_step: int):
+                self._state = StopAfterGlobalStepState(stop_step)
+
+            @property
+            def stopped_at_boundary(self) -> bool:
+                return self._state.stopped_at_boundary
+
+            def on_step_end(self, args, state, control, **kwargs):
+                if self._state.should_stop_and_save(state.global_step):
+                    control.should_training_stop = True
+                    control.should_save = True
+                return control
+
         args = TrainingArguments(
             output_dir=str(output_dir),
             per_device_train_batch_size=cfg.optimization.per_device_train_batch_size,
             gradient_accumulation_steps=cfg.optimization.gradient_accumulation_steps,
             learning_rate=cfg.optimization.learning_rate,
             warmup_ratio=cfg.optimization.warmup_ratio,
-            max_steps=max_steps,
+            max_steps=max_steps if max_steps is not None else -1,
+            num_train_epochs=num_train_epochs if num_train_epochs is not None else 1,
             gradient_checkpointing=cfg.optimization.gradient_checkpointing,
             optim=cfg.optimization.optim,
             seed=cfg.optimization.seed,
@@ -260,12 +319,18 @@ class QLoraBackend:
             report_to=[],
         )
 
+        callbacks: list = [_LogCallback()]
+        stop_callback: _StopAfterGlobalStepCallback | None = None
+        if stop_after_global_step is not None:
+            stop_callback = _StopAfterGlobalStepCallback(stop_after_global_step)
+            callbacks.append(stop_callback)
+
         trainer = Trainer(
             model=self._model,
             args=args,
             train_dataset=_ListDataset(encodings),
             data_collator=_collate,
-            callbacks=[_LogCallback()],
+            callbacks=callbacks,
         )
 
         starting_global_step = 0
@@ -288,6 +353,8 @@ class QLoraBackend:
             "global_step": trainer.state.global_step,
             "starting_global_step": starting_global_step,
             "resumed_from_checkpoint": resume_from_checkpoint,
+            "requested_stop_after_global_step": stop_after_global_step,
+            "ended_by_planned_boundary": bool(stop_callback and stop_callback.stopped_at_boundary),
             "metrics_log": metrics_log,
             "peak_gpu_memory_allocated_mb": round(torch.cuda.max_memory_allocated() / (1024**2), 1),
             "peak_gpu_memory_reserved_mb": round(torch.cuda.max_memory_reserved() / (1024**2), 1),

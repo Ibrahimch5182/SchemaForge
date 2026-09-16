@@ -1537,3 +1537,101 @@ hardware, review the real memory/throughput/resume evidence, and only
 then decide hardware scaling and a full-training session strategy. Full
 canonical training and Phase 6 remain explicitly out of scope until that
 decision is made.
+
+## Phase 5C -- Canonical Resumable Full-Training Runner
+
+**No hyperparameters, dataset policy, split, base model, tokenizer/
+revision policy, quantization, checkpoint format, or durable export
+format changed. No training was run.** This phase adds the infrastructure
+to actually RUN the canonical 2-epoch experiment across one or more
+Kaggle sessions once B-D above are satisfied.
+
+**Critical requirement**: a multi-session run must be mathematically
+equivalent to one uninterrupted `num_train_epochs=2` run. Implemented by
+never touching `TrainingArguments.max_steps`/`num_train_epochs` between
+sessions (`num_train_epochs` is always passed, `max_steps` is never used
+for this path) and adding a session-boundary mechanism
+(`--stop-after-global-step`) via a `TrainerCallback` that only sets
+`control.should_training_stop`/`should_save` -- it never touches the
+scheduler's total-step horizon.
+
+**What was built**:
+- `QLoraBackend.train_smoke` (`src/localsql/train/qlora_backend.py`)
+  extended with `num_train_epochs` (mutually exclusive with `max_steps` --
+  passing both would let `TrainingArguments.max_steps` silently override
+  `num_train_epochs`) and `stop_after_global_step`, delegating its
+  stop/force-save decision to `StopAfterGlobalStepState`
+  (`src/localsql/train/full_training.py`, CPU/offline-testable
+  independent of transformers/CUDA).
+- `src/localsql/train/full_training.py`: `compute_optimizer_step_schedule`
+  (mirrors `Trainer`'s own step-counting formula --
+  `ceil(ceil(N/batch)/grad_accum) * epochs`), `validate_resume_compatibility`
+  / `ResumeCompatibilityError` (compares canonical settings between a
+  resume request and the checkpoint's source `run_config.json`, only
+  flagging fields present-and-different on both sides), and
+  `StopAfterGlobalStepState`.
+- `scripts/run_qlora_full_training.py`: a distinctly named canonical
+  full-training runner (not another smoke test), defaulting `--input` to
+  `data/processed_phase5_candidate/train.jsonl` (the canonical 6,067-example
+  set; `validation.jsonl` is recorded for provenance only -- no
+  generation- or loss-based validation subsystem is introduced here).
+  Reuses `QLoraBackend` for all training logic. `run_config.json`/
+  `summary.json` use the SAME field names `scripts/export_checkpoint.py`
+  already reads (`train_file`, `train_file_sha256`, `resolved_revision`,
+  `max_seq_length`, `save_steps`, `save_total_limit`,
+  `resume_from_checkpoint`, `source_revision`/`source_revision_origin`,
+  and a `provenance` block matching Phase 5B's), so full-training runs
+  are exportable via the existing, unmodified `export_checkpoint.py`.
+  Additionally records `canonical_num_train_epochs`,
+  `canonical_total_optimizer_steps`, `expected_steps_per_epoch`,
+  `requested_stop_after_global_step`, `starting_global_step`,
+  `final_global_step`, and `session_end_reason`
+  (`"planned_boundary"` / `"canonical_completion"`).
+- Resume-compatibility validation runs BEFORE any GPU work: if
+  `--resume-from-checkpoint` is given and the checkpoint's parent run's
+  `run_config.json` is found, `model_id`/`max_seq_length`/`quantization`/
+  `lora`/`canonical_num_train_epochs`/`canonical_total_optimizer_steps`/
+  `train_file_sha256` must match or the run BLOCKERs and exits -- never
+  silently continues under different settings. Missing source
+  `run_config.json` (nothing to validate against) is a proceed-with-note,
+  not a BLOCKER.
+
+**Expected canonical schedule (real dataset, computed from the actual
+implementation)**: 6,067 training examples, batch=1, grad-accum=8 ->
+**759 optimizer steps/epoch**, **1,518 total optimizer steps for 2
+epochs** (verified live via `--dry-run` against the real
+`data/processed_phase5_candidate/train.jsonl`).
+
+**Tests**: `tests/train/test_full_training.py` (schedule math incl. the
+real 759/1,518 numbers, `StopAfterGlobalStepState` boundary/force-save
+decision, `validate_resume_compatibility` precedence/field coverage),
+`tests/train/test_full_training_runner_contracts.py` (BLOCKER paths for
+overwrite/missing-resume-path/out-of-range or non-positive
+`--stop-after-global-step`/canonical-setting mismatch, proceed-with-note
+on a missing source `run_config.json`, structural guards that
+`max_steps` is never passed to the backend and that
+train-file-SHA256/provenance fields are recorded). CPU/offline, no
+CUDA/transformers needed (the mutual-exclusivity check in
+`train_smoke` was deliberately placed before its heavy imports so it
+stays testable on a machine without the `model`/`train` dependency
+groups installed at all). Full suite (303 tests): `uv run pytest -q`.
+No regressions in Phase 4/5B smoke/certification/export tests.
+
+**Exact commands** (not yet run):
+
+```
+# Session 1
+uv run python scripts/run_qlora_full_training.py --run-id phase5c-session-1 \
+    --save-steps 100 --save-total-limit 3 --stop-after-global-step 400 \
+    --source-revision <commit>
+
+# Session 2 (resume, same fixed 2-epoch horizon)
+uv run python scripts/run_qlora_full_training.py --run-id phase5c-session-2 \
+    --save-steps 100 --save-total-limit 3 --stop-after-global-step 800 \
+    --resume-from-checkpoint data/runs/phase5c-session-1/checkpoint/checkpoint-400 \
+    --source-revision <commit>
+```
+
+**What Comes Next**: Phase 5B's B/C/D certification gates must pass on
+real Kaggle hardware first; only then does an actual canonical training
+session start, using the commands above.
