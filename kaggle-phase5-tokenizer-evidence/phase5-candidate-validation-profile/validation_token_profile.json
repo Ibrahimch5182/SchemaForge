@@ -1,0 +1,40 @@
+{
+  "input_file": "data/processed_phase5_candidate/validation.jsonl",
+  "tokenizer_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "example_count": 534,
+  "prompt_only_token_stats": {
+    "count": 534,
+    "min": 506.0,
+    "median": 1014.5,
+    "p90": 3307.7,
+    "p95": 3332.05,
+    "p99": 3362.01,
+    "max": 3396.0
+  },
+  "prompt_only_counts_over_threshold": {
+    ">3584": 0,
+    ">4096": 0,
+    ">8192": 0
+  },
+  "full_sft_sequence_token_stats": {
+    "count": 534,
+    "min": 563.0,
+    "median": 1088.5,
+    "p90": 3367.7,
+    "p95": 3400.35,
+    "p99": 3463.69,
+    "max": 3581.0
+  },
+  "full_sft_sequence_counts_over_threshold": {
+    ">3584": 0,
+    ">4096": 0,
+    ">8192": 0
+  },
+  "prefix_boundary_check": {
+    "description": "Verifies the full sequence's prefix equals the standalone prompt-only encoding for every example -- the assumption completion-only masking depends on. Phase 4 validated this at 0/6,067 mismatches.",
+    "mismatch_count": 0,
+    "mismatch_example_ids": []
+  },
+  "configured_max_seq_length": 4096,
+  "note": "max_seq_length was NOT auto-adjusted from this profile -- review before changing configs/train.yaml."
+}

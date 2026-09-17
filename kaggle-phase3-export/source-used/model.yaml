@@ -1,0 +1,55 @@
+# LocalSQL Phase 3 baseline model configuration.
+# All model/generation constants live here rather than scattered in Python.
+#
+# This config is read by lightweight code (pydantic + pyyaml only) and is
+# safe to parse/validate on this Windows machine without the optional
+# "model" dependency group. Only `scripts/run_baseline.py` (non-dry-run mode)
+# actually needs torch/transformers/bitsandbytes, on a CUDA machine.
+
+model:
+  # Locked baseline model -- the untouched instruction-tuned base, never
+  # fine-tuned in this phase. Do not replace or select a different model.
+  id: Qwen/Qwen3-4B-Instruct-2507
+  # null = resolve and pin the actual HF commit SHA at run time (never
+  # silently float on mutable `main`); set explicitly to pin/reproduce a
+  # specific past run.
+  revision: null
+
+runtime:
+  # 4-bit NF4 is the PRIMARY baseline runtime: the future QLoRA model will
+  # use the same 4-bit base representation, so this isolates the effect of
+  # fine-tuning rather than confounding it with a precision change.
+  load_in_4bit: true
+  quantization: nf4
+  double_quant: true
+  compute_dtype: float16
+  device: cuda
+  batch_size: 1
+
+generation:
+  # Deterministic decoding only -- no sampling, no temperature, no top-p,
+  # no repair/retry. A baseline that violates the SQL-only contract is a
+  # legitimate, visible result, not something to paper over.
+  do_sample: false
+  max_new_tokens: 512
+  seed: 42
+
+prompt:
+  # The canonical LocalSQL prompt (localsql.data.prompt_builder.build_prompt)
+  # is used unmodified as the content of a single user message; the Qwen
+  # tokenizer's own chat template is the only model-specific envelope.
+  envelope: qwen_chat_template
+  # with_business_context = primary Phase 3 benchmark (Mini-Dev evidence
+  # included when present; Phase 1's 50% training dropout does NOT apply to
+  # external evaluation). without_business_context is architected for but
+  # not run in this phase (conserve GPU/time -- no second 500-example pass).
+  context_mode: with_business_context
+
+token_profile:
+  # Thresholds for the token-profile mode (informs later training sequence
+  # length decisions). Not a truncation limit -- prompts are never chopped.
+  warn_threshold: 4096
+  hard_limit: 8192
+
+paths:
+  runs_dir: data/runs

@@ -1,0 +1,59 @@
+{
+  "run_id": "qwen3-4b-base-nf4",
+  "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "model_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "tokenizer_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "quantization": {
+    "load_in_4bit": true,
+    "quant_type": "nf4",
+    "double_quant": true,
+    "compute_dtype": "float16"
+  },
+  "generation_config": {
+    "do_sample": false,
+    "max_new_tokens": 512,
+    "seed": 42
+  },
+  "context_mode": "with_business_context",
+  "manifest_sha256": "6903e95f373e267d5ebbbf5fa9b47100c3cf3ded9294595e1c5a026dbe0befa7",
+  "requested_examples": 500,
+  "completed_examples": 500,
+  "generated_this_run": 500,
+  "failed_this_run": 0,
+  "stopped_early_oom": false,
+  "total_runtime_seconds": 3045.86,
+  "latency_ms_stats": {
+    "count": 500,
+    "min": 1249.9183289992288,
+    "median": 5576.758827499361,
+    "p90": 8890.7,
+    "p95": 9981.84,
+    "max": 34239.53407999943
+  },
+  "input_token_stats": {
+    "count": 500,
+    "min": 203.0,
+    "median": 930.5,
+    "p90": 2322.7,
+    "p95": 2368.05,
+    "max": 2428.0
+  },
+  "output_token_stats": {
+    "count": 500,
+    "min": 9.0,
+    "median": 53.0,
+    "p90": 88.1,
+    "p95": 106.05,
+    "max": 416.0
+  },
+  "peak_gpu_memory_mb": 4773.4,
+  "provenance": {
+    "python_version": "3.12.13",
+    "torch_version": "2.10.0+cu128",
+    "transformers_version": "5.17.0",
+    "bitsandbytes_version": "0.50.2",
+    "cuda_version": "12.8",
+    "gpu_name": "Tesla T4",
+    "gpu_total_memory_mb": 14911.7
+  }
+}

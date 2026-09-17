@@ -1,0 +1,75 @@
+{
+  "run_id": "qlora-smoke-1-alloc-retry",
+  "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "resolved_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "tokenizer_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "quantization": {
+    "load_in_4bit": true,
+    "quant_type": "nf4",
+    "double_quant": true,
+    "compute_dtype": "float16"
+  },
+  "lora": {
+    "r": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ]
+  },
+  "trainable_param_count": 33030144,
+  "total_param_count": 2238840320,
+  "optimization": {
+    "per_device_train_batch_size": 1,
+    "gradient_accumulation_steps": 8,
+    "learning_rate": 0.0001,
+    "warmup_ratio": 0.05,
+    "gradient_checkpointing": true,
+    "optim": "paged_adamw_8bit",
+    "seed": 42
+  },
+  "max_seq_length": 4096,
+  "completion_only_loss": true,
+  "max_steps": 20,
+  "requested_train_examples": 200,
+  "usable_train_examples": 200,
+  "skipped_exceeds_max_seq_length": 0,
+  "global_step": 20,
+  "runtime_seconds": 3098.01,
+  "peak_gpu_memory_mb": 11550.2,
+  "train_result_metrics": {
+    "train_runtime": 3097.4346,
+    "train_samples_per_second": 0.052,
+    "train_steps_per_second": 0.006,
+    "total_flos": 9942760151608320.0,
+    "train_loss": 0.40999391712248323,
+    "epoch": 0.8
+  },
+  "adapter_path": "/kaggle/working/localsql/data/runs/qlora-smoke-1-alloc-retry/adapter",
+  "adapter_verification": {
+    "resolved_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+    "adapter_active": true,
+    "adapter_names": [
+      "default"
+    ],
+    "sample_example_id": "birdsql/bird23-train-filtered:00000",
+    "sample_raw_completion": "SELECT T1.director_name FROM movies AS T1 WHERE T1.movie_title = 'Sex, Drink and Bloodshed'"
+  },
+  "train_file_sha256": "81c29e14e3b33a1740bba41592d0914d8a00fa356107830cae74c6eb9d0333a8",
+  "provenance": {
+    "python_version": "3.12.13",
+    "torch_version": "2.10.0+cu128",
+    "transformers_version": "5.0.0",
+    "peft_version": "0.19.1",
+    "bitsandbytes_version": "0.50.2",
+    "cuda_version": "12.8",
+    "gpu_name": "Tesla T4",
+    "gpu_total_memory_mb": 14911.7
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "run_id": "qwen3-4b-base-nf4",
+  "model_id": "Qwen/Qwen3-4B-Instruct-2507",
+  "model_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "quantization": {
+    "load_in_4bit": true,
+    "quant_type": "nf4",
+    "double_quant": true,
+    "compute_dtype": "float16"
+  },
+  "generation": {
+    "do_sample": false,
+    "max_new_tokens": 512,
+    "seed": 42
+  },
+  "context_mode": "with_business_context",
+  "manifest_path": "data/benchmarks/bird_mini_dev/generation/manifest.jsonl",
+  "manifest_sha256": "6903e95f373e267d5ebbbf5fa9b47100c3cf3ded9294595e1c5a026dbe0befa7",
+  "limit": null
+}

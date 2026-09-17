@@ -1,0 +1,257 @@
+{
+  "profile_name": "validation",
+  "top_n": 50,
+  "total_examples_considered": 534,
+  "entries": [
+    {
+      "rank": 1,
+      "example_id": "birdsql/bird23-train-filtered:03826",
+      "full_sft_token_count": 3581.0
+    },
+    {
+      "rank": 2,
+      "example_id": "birdsql/bird23-train-filtered:00092",
+      "full_sft_token_count": 3531.0
+    },
+    {
+      "rank": 3,
+      "example_id": "birdsql/bird23-train-filtered:00091",
+      "full_sft_token_count": 3502.0
+    },
+    {
+      "rank": 4,
+      "example_id": "birdsql/bird23-train-filtered:00105",
+      "full_sft_token_count": 3502.0
+    },
+    {
+      "rank": 5,
+      "example_id": "birdsql/bird23-train-filtered:03808",
+      "full_sft_token_count": 3480.0
+    },
+    {
+      "rank": 6,
+      "example_id": "birdsql/bird23-train-filtered:00106",
+      "full_sft_token_count": 3466.0
+    },
+    {
+      "rank": 7,
+      "example_id": "birdsql/bird23-train-filtered:00110",
+      "full_sft_token_count": 3459.0
+    },
+    {
+      "rank": 8,
+      "example_id": "birdsql/bird23-train-filtered:00132",
+      "full_sft_token_count": 3453.0
+    },
+    {
+      "rank": 9,
+      "example_id": "birdsql/bird23-train-filtered:05845",
+      "full_sft_token_count": 3453.0
+    },
+    {
+      "rank": 10,
+      "example_id": "birdsql/bird23-train-filtered:00082",
+      "full_sft_token_count": 3446.0
+    },
+    {
+      "rank": 11,
+      "example_id": "birdsql/bird23-train-filtered:00088",
+      "full_sft_token_count": 3439.0
+    },
+    {
+      "rank": 12,
+      "example_id": "birdsql/bird23-train-filtered:00145",
+      "full_sft_token_count": 3438.0
+    },
+    {
+      "rank": 13,
+      "example_id": "birdsql/bird23-train-filtered:00089",
+      "full_sft_token_count": 3433.0
+    },
+    {
+      "rank": 14,
+      "example_id": "birdsql/bird23-train-filtered:00101",
+      "full_sft_token_count": 3431.0
+    },
+    {
+      "rank": 15,
+      "example_id": "birdsql/bird23-train-filtered:00147",
+      "full_sft_token_count": 3429.0
+    },
+    {
+      "rank": 16,
+      "example_id": "birdsql/bird23-train-filtered:00083",
+      "full_sft_token_count": 3423.0
+    },
+    {
+      "rank": 17,
+      "example_id": "birdsql/bird23-train-filtered:03834",
+      "full_sft_token_count": 3422.0
+    },
+    {
+      "rank": 18,
+      "example_id": "birdsql/bird23-train-filtered:03824",
+      "full_sft_token_count": 3421.0
+    },
+    {
+      "rank": 19,
+      "example_id": "birdsql/bird23-train-filtered:00103",
+      "full_sft_token_count": 3419.0
+    },
+    {
+      "rank": 20,
+      "example_id": "birdsql/bird23-train-filtered:00126",
+      "full_sft_token_count": 3416.0
+    },
+    {
+      "rank": 21,
+      "example_id": "birdsql/bird23-train-filtered:03820",
+      "full_sft_token_count": 3414.0
+    },
+    {
+      "rank": 22,
+      "example_id": "birdsql/bird23-train-filtered:00084",
+      "full_sft_token_count": 3413.0
+    },
+    {
+      "rank": 23,
+      "example_id": "birdsql/bird23-train-filtered:03829",
+      "full_sft_token_count": 3410.0
+    },
+    {
+      "rank": 24,
+      "example_id": "birdsql/bird23-train-filtered:00154",
+      "full_sft_token_count": 3408.0
+    },
+    {
+      "rank": 25,
+      "example_id": "birdsql/bird23-train-filtered:00102",
+      "full_sft_token_count": 3405.0
+    },
+    {
+      "rank": 26,
+      "example_id": "birdsql/bird23-train-filtered:00121",
+      "full_sft_token_count": 3402.0
+    },
+    {
+      "rank": 27,
+      "example_id": "birdsql/bird23-train-filtered:00113",
+      "full_sft_token_count": 3401.0
+    },
+    {
+      "rank": 28,
+      "example_id": "birdsql/bird23-train-filtered:00137",
+      "full_sft_token_count": 3400.0
+    },
+    {
+      "rank": 29,
+      "example_id": "birdsql/bird23-train-filtered:00142",
+      "full_sft_token_count": 3400.0
+    },
+    {
+      "rank": 30,
+      "example_id": "birdsql/bird23-train-filtered:00086",
+      "full_sft_token_count": 3399.0
+    },
+    {
+      "rank": 31,
+      "example_id": "birdsql/bird23-train-filtered:00111",
+      "full_sft_token_count": 3396.0
+    },
+    {
+      "rank": 32,
+      "example_id": "birdsql/bird23-train-filtered:00119",
+      "full_sft_token_count": 3395.0
+    },
+    {
+      "rank": 33,
+      "example_id": "birdsql/bird23-train-filtered:00080",
+      "full_sft_token_count": 3394.0
+    },
+    {
+      "rank": 34,
+      "example_id": "birdsql/bird23-train-filtered:00104",
+      "full_sft_token_count": 3393.0
+    },
+    {
+      "rank": 35,
+      "example_id": "birdsql/bird23-train-filtered:05849",
+      "full_sft_token_count": 3393.0
+    },
+    {
+      "rank": 36,
+      "example_id": "birdsql/bird23-train-filtered:00093",
+      "full_sft_token_count": 3391.0
+    },
+    {
+      "rank": 37,
+      "example_id": "birdsql/bird23-train-filtered:00094",
+      "full_sft_token_count": 3390.0
+    },
+    {
+      "rank": 38,
+      "example_id": "birdsql/bird23-train-filtered:03837",
+      "full_sft_token_count": 3388.0
+    },
+    {
+      "rank": 39,
+      "example_id": "birdsql/bird23-train-filtered:00146",
+      "full_sft_token_count": 3386.0
+    },
+    {
+      "rank": 40,
+      "example_id": "birdsql/bird23-train-filtered:03827",
+      "full_sft_token_count": 3380.0
+    },
+    {
+      "rank": 41,
+      "example_id": "birdsql/bird23-train-filtered:00097",
+      "full_sft_token_count": 3379.0
+    },
+    {
+      "rank": 42,
+      "example_id": "birdsql/bird23-train-filtered:03825",
+      "full_sft_token_count": 3377.0
+    },
+    {
+      "rank": 43,
+      "example_id": "birdsql/bird23-train-filtered:05239",
+      "full_sft_token_count": 3374.0
+    },
+    {
+      "rank": 44,
+      "example_id": "birdsql/bird23-train-filtered:00141",
+      "full_sft_token_count": 3373.0
+    },
+    {
+      "rank": 45,
+      "example_id": "birdsql/bird23-train-filtered:00109",
+      "full_sft_token_count": 3371.0
+    },
+    {
+      "rank": 46,
+      "example_id": "birdsql/bird23-train-filtered:00136",
+      "full_sft_token_count": 3370.0
+    },
+    {
+      "rank": 47,
+      "example_id": "birdsql/bird23-train-filtered:00081",
+      "full_sft_token_count": 3369.0
+    },
+    {
+      "rank": 48,
+      "example_id": "birdsql/bird23-train-filtered:00096",
+      "full_sft_token_count": 3369.0
+    },
+    {
+      "rank": 49,
+      "example_id": "birdsql/bird23-train-filtered:00148",
+      "full_sft_token_count": 3369.0
+    },
+    {
+      "rank": 50,
+      "example_id": "birdsql/bird23-train-filtered:03816",
+      "full_sft_token_count": 3369.0
+    }
+  ]
+}

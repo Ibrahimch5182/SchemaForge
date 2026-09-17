@@ -1,0 +1,28 @@
+{
+  "tokenizer_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "example_count": 6067,
+  "prompt_only_token_stats": {
+    "count": 6067,
+    "min": 509.0,
+    "median": 2468.0,
+    "p90": 7956.4,
+    "p95": 27890.0,
+    "p99": 27918.34,
+    "max": 27995.0
+  },
+  "prompt_only_count_above_warn": 1397,
+  "prompt_only_count_above_hard": 539,
+  "full_sft_sequence_token_stats": {
+    "count": 6067,
+    "min": 549.0,
+    "median": 2506.0,
+    "p90": 8013.8,
+    "p95": 27927.0,
+    "p99": 27975.0,
+    "max": 28082.0
+  },
+  "full_sft_sequence_count_above_warn": 1398,
+  "full_sft_sequence_count_above_hard": 539,
+  "configured_max_seq_length": 4096,
+  "note": "max_seq_length was NOT auto-adjusted from this profile -- review before changing configs/train.yaml."
+}

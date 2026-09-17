@@ -1,0 +1,15 @@
+{
+  "context_mode": "with_business_context",
+  "tokenizer_revision": "cdbee75f17c01a7cc42f958dc650907174af0554",
+  "example_count": 500,
+  "prompt_token_stats": {
+    "count": 500,
+    "min": 203.0,
+    "median": 930.5,
+    "p90": 2322.7,
+    "p95": 2368.05,
+    "max": 2428.0
+  },
+  "count_above_4096": 0,
+  "count_above_8192": 0
+}
