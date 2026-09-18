@@ -1635,3 +1635,81 @@ uv run python scripts/run_qlora_full_training.py --run-id phase5c-session-2 \
 **What Comes Next**: Phase 5B's B/C/D certification gates must pass on
 real Kaggle hardware first; only then does an actual canonical training
 session start, using the commands above.
+
+## Phase 5D -- Fine-Tuned Evaluation Runner
+
+**Canonical training is COMPLETE**: the Phase 5C canonical full-training
+run finished at **1518/1518 optimizer steps (2 epochs)** on training data
+sha256 `e23a97ea746cef24b17f6bea8dc8440ab96313798837033ec76af9ca79830196`
+(source revision `e173c235dcfee41868010de68db471616c92db36`), producing
+adapter checkpoint `checkpoint-1518` (`adapter_model.safetensors` +
+`adapter_config.json` + full resumable checkpoint state), exported and
+durable per Phase 5B's export infrastructure.
+
+**What was built** (evaluation-path plumbing only -- no training code
+touched): `QwenBackend.load()` (`src/localsql/model/qwen_backend.py`)
+gained an optional `adapter_path` parameter, default `None`, in which case
+behavior is unchanged from the Phase 3 baseline path (same base-model
+kwargs, no `peft` import at all). When `adapter_path` is supplied, the
+identical NF4 base model is loaded first, then wrapped via
+`PeftModel.from_pretrained(..., is_trainable=False)` (never
+`merge_and_unload()`), mirroring the pattern already used for Phase 4's
+`load_adapter_for_verification`. A new `validate_adapter_path()` fails
+closed (missing directory / missing `adapter_config.json` or
+`adapter_model.safetensors`) before any torch/transformers/CUDA work, so a
+bad `--adapter` path is rejected the same way whether or not the optional
+"model"/"train" dependency groups are even installed. `generate_one()` is
+untouched -- one generation implementation, reused as-is.
+
+`scripts/run_finetuned.py` is a new, separate runner (never modifies
+`run_baseline.py`), structurally reusing the Phase 3 machinery unchanged:
+the same `GenerationExample`, `resolve_generation_example()`,
+`generate_one_example()`, `RunDirectory`, Phase 2 `predictions.jsonl`
+contract, `model.yaml` generation config, and unmodified
+`normalize_predicted_sql()` (whitespace-trim only). CLI:
+`--manifest --run-id --adapter [--model-config] [--limit] [--context-mode]
+[--dry-run]`. Fail-closed adapter validation runs before the manifest is
+even read. Per-example resume works identically to `run_baseline.py`
+(same `RunDirectory`/`generations.jsonl`/`rewrite_predictions` machinery),
+so a Kaggle session interruption mid-run is restartable under the same
+`--run-id`. Resume-safety against accidentally mixing a baseline and an
+adapter run under the same `--run-id`, or two different adapters, is
+achieved without touching the shared `RunConfig` schema: the run's
+`model_id` is tagged `"<base_model_id>+lora:<resolved adapter path>"`
+(`adapter_model_id()`), which both appears in `predictions.jsonl` and
+participates in `RunConfig.matches()`'s existing identity check. Provenance
+recorded in the run's `summary.json` (no shared schema changes): base
+model id, resolved base revision, adapter path, adapter weights SHA256,
+`adapter_active`, context mode, manifest SHA256, generation config,
+quantization config -- so this run can never be mistaken for the Phase 3
+baseline result.
+
+**Tests** (`tests/model/test_qwen_backend.py`,
+`tests/model/test_run_finetuned_contracts.py`): baseline `QwenBackend`
+behavior unchanged when `adapter_path=None` (asserted via a fake
+torch/transformers/bitsandbytes/huggingface_hub stack injected into
+`sys.modules`, with `peft` deliberately absent to prove it's never
+imported on that path); missing/incomplete adapter directories fail
+closed with a clear `AdapterValidationError` before any model load;
+adapter wrapping never calls `merge_and_unload()`; the fine-tuned runner
+consumes the same gold-free manifest contract and rejects a gold-bearing
+row exactly like `run_baseline.py`; generation is proven to go through
+the shared `generate_one_example()` (no second implementation);
+`--dry-run` requires no CUDA/model deps; provenance (`model_id` tagging)
+is proven to differ between a baseline-shaped and an adapter-shaped
+`RunConfig`. Full suite: 318 tests, all green, no regressions.
+
+**Real BIRD Mini-Dev fine-tuned result: NOT YET RUN.** The Phase 3
+baseline (untouched, still the only real number on record) remains
+**official EX 43.6%, Soft-F1 47.6975%** (500/500 generated, 0 failures).
+Do NOT claim improvement -- or any result at all -- for checkpoint-1518
+until `scripts/run_finetuned.py` is actually executed on real Kaggle GPU
+hardware against the full 500-example manifest with
+`--context-mode with_business_context`, and the resulting
+`predictions.jsonl` is scored with the existing, unmodified
+`scripts/evaluate_bird_minidev.py`.
+
+**What Comes Next**: run `scripts/run_finetuned.py` on Kaggle against
+`checkpoint-1518` with `--context-mode with_business_context` over the
+full 500-example Mini-Dev manifest, then score with
+`scripts/evaluate_bird_minidev.py` -- this is the final Phase 5 gate.

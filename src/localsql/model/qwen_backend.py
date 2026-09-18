@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from localsql.model.config import ModelConfig
@@ -22,6 +23,31 @@ from localsql.model.generation import BackendGenerationResult, build_model_input
 class CudaNotAvailableError(RuntimeError):
     """Real Qwen inference requires CUDA. Use --dry-run for infra checks
     without a GPU, or run this on a Linux CUDA cloud/Kaggle instance."""
+
+
+class AdapterValidationError(RuntimeError):
+    """Raised when a requested PEFT adapter directory is missing, incomplete,
+    or fails to load/activate. Fail closed -- never fall back to the base
+    model silently."""
+
+
+def validate_adapter_path(adapter_path: Path) -> None:
+    """Filesystem-only precondition check for a PEFT adapter directory.
+
+    No torch/transformers/peft import -- safe to call from --dry-run (or
+    before any GPU/model work) to fail closed early. Loading the adapter
+    weights and confirming it actually activates still happens in
+    `QwenBackend.load()`; this only rules out the obviously-missing cases.
+    """
+    adapter_path = Path(adapter_path)
+    if not adapter_path.is_dir():
+        raise AdapterValidationError(f"Adapter directory not found: {adapter_path}")
+    required = ("adapter_config.json", "adapter_model.safetensors")
+    missing = [name for name in required if not (adapter_path / name).is_file()]
+    if missing:
+        raise AdapterValidationError(
+            f"Adapter directory {adapter_path} is missing required file(s): {', '.join(missing)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -37,6 +63,8 @@ class LoadedModelInfo:
     cuda_version: Optional[str]
     gpu_name: Optional[str]
     gpu_total_memory_mb: Optional[float]
+    adapter_path: Optional[str] = None
+    adapter_active: bool = False
 
 
 class QwenBackend:
@@ -46,7 +74,24 @@ class QwenBackend:
         self._tokenizer = None
         self.info: Optional[LoadedModelInfo] = None
 
-    def load(self) -> LoadedModelInfo:
+    def load(self, adapter_path: Optional[Path] = None) -> LoadedModelInfo:
+        """Load the base Qwen model (unchanged NF4 configuration).
+
+        `adapter_path=None` (the default) is byte-for-byte the original
+        Phase 3 baseline path -- no PEFT import, no behavior change. When
+        `adapter_path` is supplied, the same base model is loaded first and
+        then wrapped with the LoRA adapter via `PeftModel.from_pretrained`
+        (inference only, `is_trainable=False`, never merged), matching the
+        pattern already used for Phase 4 adapter-reload verification in
+        `localsql.train.qlora_backend.load_adapter_for_verification`.
+        """
+        # Filesystem-only fail-closed check first -- an obviously bad
+        # adapter path must never get as far as importing torch/transformers
+        # or touching CUDA, and must fail the same way whether or not those
+        # optional deps happen to be installed.
+        if adapter_path is not None:
+            validate_adapter_path(adapter_path)
+
         import torch
         import transformers
         import bitsandbytes
@@ -77,6 +122,19 @@ class QwenBackend:
             quantization_config=bnb_config,
             device_map=cfg.runtime.device,
         )
+
+        adapter_active = False
+        if adapter_path is not None:
+            from peft import PeftModel
+
+            model = PeftModel.from_pretrained(model, str(adapter_path), is_trainable=False)
+            active_adapters = list(getattr(model, "peft_config", None) or {})
+            if not active_adapters:
+                raise AdapterValidationError(
+                    f"Adapter loaded from {adapter_path} but no active PEFT adapter is present."
+                )
+            adapter_active = True
+
         model.eval()
 
         torch.cuda.reset_peak_memory_stats()
@@ -100,6 +158,8 @@ class QwenBackend:
             cuda_version=torch.version.cuda,
             gpu_name=torch.cuda.get_device_name(0),
             gpu_total_memory_mb=round(torch.cuda.get_device_properties(0).total_memory / (1024**2), 1),
+            adapter_path=str(adapter_path) if adapter_path is not None else None,
+            adapter_active=adapter_active,
         )
         return self.info
 
