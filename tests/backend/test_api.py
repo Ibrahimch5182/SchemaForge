@@ -153,3 +153,25 @@ def test_unknown_route_is_safe_404(tmp_path):
 def test_isinstance_service(tmp_path):
     service, *_ = make_service(tmp_path)
     assert isinstance(service, QueryService)
+
+
+def test_cors_allows_only_configured_origins_and_exposes_request_id(tmp_path):
+    service, *_ = make_service(tmp_path)
+    c = TestClient(create_app(service, cors_origins=["http://localhost:5173"]))
+    ok = c.get("/health", headers={"Origin": "http://localhost:5173"})
+    assert ok.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert "x-request-id" in ok.headers["access-control-expose-headers"].lower()
+    assert "access-control-allow-credentials" not in ok.headers
+    evil = c.get("/health", headers={"Origin": "http://evil.example"})
+    assert "access-control-allow-origin" not in evil.headers
+    pre = c.options("/query", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST",
+                                       "Access-Control-Request-Headers": "content-type"})  # fmt: skip
+    assert pre.status_code == 200 and "POST" in pre.headers["access-control-allow-methods"]
+    err = c.post("/query", json={}, headers={"Origin": "http://localhost:5173"})  # error responses carry CORS too
+    assert err.status_code == 422 and err.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_no_cors_headers_by_default(tmp_path):
+    service, *_ = make_service(tmp_path)
+    r = TestClient(create_app(service)).get("/health", headers={"Origin": "http://localhost:5173"})
+    assert "access-control-allow-origin" not in r.headers

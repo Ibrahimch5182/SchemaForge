@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -45,7 +46,7 @@ def _error_body(request: Request, code: str, message: str, fields: Optional[list
     return {"request_id": _request_id(request), "error": err}
 
 
-def create_app(service: QueryService) -> FastAPI:
+def create_app(service: QueryService, cors_origins: Sequence[str] = ()) -> FastAPI:
     app = FastAPI(title="SchemaForge", version="0.8.0")
     app.state.query_service = service
     log = get_logger()
@@ -57,6 +58,19 @@ def create_app(service: QueryService) -> FastAPI:
         response = await call_next(request)
         response.headers[REQUEST_ID_HEADER] = request.state.request_id
         return response
+
+    if cors_origins:
+        # Added after the request-id middleware => outermost, so CORS headers
+        # also cover error responses. Explicit origins only; no credentials.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(cors_origins),
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", REQUEST_ID_HEADER],
+            expose_headers=[REQUEST_ID_HEADER],
+            allow_credentials=False,
+            max_age=600,
+        )
 
     @app.exception_handler(RequestValidationError)
     async def on_validation_error(request: Request, exc: RequestValidationError):
@@ -105,5 +119,7 @@ def create_app(service: QueryService) -> FastAPI:
 def create_app_from_env() -> FastAPI:
     """Uvicorn factory: builds the service from configs/backend.yaml + env."""
     from localsql.backend.bootstrap import build_query_service
+    from localsql.backend.config import cors_origins, load_backend_config
 
-    return create_app(build_query_service())
+    cfg = load_backend_config()
+    return create_app(build_query_service(cfg), cors_origins=cors_origins(cfg))

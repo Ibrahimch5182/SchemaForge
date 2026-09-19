@@ -106,3 +106,10 @@ dist/
 # manifests, benchmark outputs -- reproducible via scripts/prepare_phase7.py
 # and scripts/convert_phase7.py; never committed)
 .artifacts/
+
+# Phase 9: frontend (node_modules and build output are never committed)
+node_modules/
+frontend/dist/
+frontend/.env.local
+frontend/.env.*.local
+*.tsbuildinfo

@@ -130,3 +130,11 @@ def test_build_query_service_with_injected_runtime_end_to_end(tmp_path):
     service = build_query_service(cfg, runtime=FakeRuntime("SELECT COUNT(*) FROM departments"), env={})
     resp = service.query(QueryRequest(database_id="demo", question="How many departments?"))
     assert resp.status == "ok" and resp.result.rows == [[3]]
+
+
+def test_cors_origins_from_config_and_env_override():
+    cfg = bcfg.load_backend_config(env={})
+    assert "http://localhost:5173" in bcfg.cors_origins(cfg, {})
+    assert "*" not in bcfg.cors_origins(cfg, {})
+    assert bcfg.cors_origins(cfg, {bcfg.ENV_CORS_ORIGINS: " http://a.test , http://b.test "}) == ["http://a.test", "http://b.test"]
+    assert bcfg.cors_origins(cfg, {bcfg.ENV_CORS_ORIGINS: ""}) == []

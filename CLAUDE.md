@@ -85,8 +85,12 @@ User question --> schema introspection --> fine-tuned model
    both stay importable without them. Phase 8 added a default-installed
    `api` group (`fastapi`, `uvicorn`, `httpx`) for the backend API only;
    `localsql.backend.service` itself must stay free of FastAPI imports.
-8. Do not implement future phases early (Phase 8 backend exists; still no
-   frontend, no agents, no auth, no cloud/vLLM, no PostgreSQL yet).
+8. Do not implement future phases early (Phase 8 backend and Phase 9
+   frontend exist; still no agents, no auth, no cloud/vLLM, no PostgreSQL
+   yet). The frontend (`frontend/`, Vite + React + TypeScript, npm) is
+   separate from the Python package and must only use the Phase 8 API -- no
+   database access, SQL safety, execution or model logic in it, no
+   `dangerouslySetInnerHTML`, no arbitrary-SQL input.
 9. The official BIRD Mini-Dev evaluator (`evaluation_ex.py`,
    `evaluation_f1.py`, `evaluation_utils.py`) is vendored unmodified at a
    pinned commit and imported directly, never copy-pasted/edited. If it
@@ -188,6 +192,8 @@ uv run pytest -q
 - `docs/PHASE8.md` -- Phase 8: production backend (`localsql.backend`,
   `configs/backend.yaml`): registry, introspection, safety, read-only
   executor, QueryService, FastAPI + CLI, smoke test.
+- `docs/PHASE9.md` -- Phase 9: product frontend (`frontend/`): landing +
+  results presentation, query workspace, API client, tests, real smoke.
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.

@@ -28,6 +28,7 @@ ENV_BASE_GGUF = "SCHEMAFORGE_BASE_GGUF"
 ENV_LORA_GGUF = "SCHEMAFORGE_LORA_GGUF"
 ENV_THREADS = "SCHEMAFORGE_LLAMA_THREADS"
 ENV_NGL = "SCHEMAFORGE_LLAMA_NGL"
+ENV_CORS_ORIGINS = "SCHEMAFORGE_CORS_ORIGINS"  # comma-separated; overrides api.cors_allowed_origins
 
 
 class _Frozen(BaseModel):
@@ -58,6 +59,11 @@ class RuntimeConfig(_Frozen):
     timeout_seconds: float = Field(gt=0)
 
 
+class ApiConfig(_Frozen):
+    # Browser origins allowed to call the API (the Phase 9 frontend dev/preview servers).
+    cors_allowed_origins: list[str] = Field(default_factory=list)
+
+
 class LoggingConfig(_Frozen):
     level: str = "INFO"
 
@@ -66,6 +72,7 @@ class BackendConfig(_Frozen):
     databases: DatabasesConfig
     execution: ExecutionConfig
     runtime: RuntimeConfig
+    api: ApiConfig = ApiConfig()
     logging: LoggingConfig = LoggingConfig()
 
     def database_entries(self) -> list[DatabaseEntry]:
@@ -88,6 +95,14 @@ def load_backend_config(path: Optional[Path] = None, env: Optional[Mapping[str, 
     if override:
         cfg = cfg.model_copy(update={"databases": cfg.databases.model_copy(update={"root": override})})
     return cfg
+
+
+def cors_origins(cfg: BackendConfig, env: Optional[Mapping[str, str]] = None) -> list[str]:
+    env = os.environ if env is None else env
+    raw = env.get(ENV_CORS_ORIGINS)
+    if raw is None:
+        return list(cfg.api.cors_allowed_origins)
+    return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 def database_root(cfg: BackendConfig) -> Path:
