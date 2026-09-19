@@ -120,18 +120,22 @@ class QueryService:
         return dict(fn()) if callable(fn) else {}
 
     def readiness(self) -> dict[str, Any]:
-        """Ready = a model runtime is configured with its artifacts present and
-        at least one database is registered. Never runs inference."""
+        """Ready = a model runtime is configured with its artifacts present (subprocess)
+        or its model server reachable and loaded (persistent), and at least one database
+        is registered. Never runs inference."""
         reasons: list[str] = []
         desc = self._runtime.describe()
         rt = self._runtime_readiness()
         if not desc.get("configured", True):
             reasons.append("model_not_configured")
         elif rt and not rt.get("ready", True):
-            reasons.append("model_artifacts_missing")
+            reasons.append(rt.get("reason", "model_artifacts_missing"))
         if not self._registry.list():
             reasons.append("no_databases_registered")
-        return {"ready": not reasons, "reasons": reasons, "availability": rt.get("availability")}
+        out = {"ready": not reasons, "reasons": reasons, "availability": rt.get("availability")}
+        if "serving" in rt:  # persistent server: mode + reachable/loading/ready/busy/saturated (no paths, no URL)
+            out["serving"] = rt["serving"]
+        return out
 
     # ------------------------------------------------------ cancellation
     def cancel(self, request_id: str) -> bool:

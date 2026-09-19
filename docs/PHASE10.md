@@ -122,7 +122,8 @@ Cooperative and thread-based (the sync pipeline runs in a worker thread; no asyn
 
 Non-pipeline errors use the JSON envelope: `unknown_database` (404),
 `database_unavailable` (503), `invalid_request` (422), `not_found` (404),
-`internal_error` (500). "Malformed" safety codes (`empty_sql`, `parse_error`,
+`internal_error` (500); Phase 11 adds the public-demo protections `rate_limited` (429, with
+`Retry-After`) and `payload_too_large` (413). "Malformed" safety codes (`empty_sql`, `parse_error`,
 `invalid_characters`, `too_long`) are reclassified from `unsafe_sql` to
 `malformed_model_output`: garbage output is a model problem, not a policy violation
 (so the earlier `: SELECT …` artifact now reads correctly). A test keeps this document in

@@ -35,6 +35,8 @@ ENVELOPE_HTTP: dict[str, int] = {
     "invalid_request": 422,
     "not_found": 404,
     "internal_error": 500,
+    "rate_limited": 429,  # Phase 11 public-demo per-client limiter
+    "payload_too_large": 413,
 }
 
 # Every `error.code` a QueryResponse may carry, grouped by status.

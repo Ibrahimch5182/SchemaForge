@@ -1,0 +1,107 @@
+# SchemaForge production stack (single host). Only Caddy publishes ports; the backend is the
+# application boundary; the model server lives on an internal, egress-less network.
+#   cp deploy/production.env.example .env   # then edit
+#   docker compose up -d --build
+# CPU works out of the box. GPU (optional): add  -f docker-compose.gpu.yml
+name: schemaforge
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+services:
+  seed-db:
+    # One-shot: creates the deterministic demo SQLite DB in the shared volume.
+    image: schemaforge-backend:${SCHEMAFORGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "-m", "localsql.backend.demo", "/data/databases/demo.sqlite"]
+    volumes:
+      - dbdata:/data/databases
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+
+  model-server:
+    image: schemaforge-model-server:${SCHEMAFORGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: docker/model-server.Dockerfile
+      args:
+        LLAMA_CPP_IMAGE: ${LLAMA_CPP_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-b10964}
+    <<: *hardening
+    environment:
+      MODEL_DIR: /models
+      BASE_GGUF_NAME: ${BASE_GGUF_NAME:?set BASE_GGUF_NAME}
+      LORA_GGUF_NAME: ${LORA_GGUF_NAME:?set LORA_GGUF_NAME}
+      LLAMA_CTX: ${LLAMA_CTX:-8192}
+      LLAMA_PARALLEL: ${LLAMA_PARALLEL:-1}
+      LLAMA_NGL: ${LLAMA_NGL:-0}
+      LLAMA_THREADS: ${LLAMA_THREADS:--1}
+      VERIFY_SHA256: ${VERIFY_SHA256:-1}
+    volumes:
+      - ${MODEL_DIR:?set MODEL_DIR}:/models:ro
+    tmpfs: [/tmp]
+    networks: [model]
+    # No `ports:` -- unreachable from outside Docker.
+
+  backend:
+    image: schemaforge-backend:${SCHEMAFORGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    <<: *hardening
+    read_only: true
+    tmpfs: [/tmp]
+    depends_on:
+      seed-db:
+        condition: service_completed_successfully
+      model-server:
+        condition: service_started # /ready reports loading/unreachable; the backend never blocks on the model
+    environment:
+      SCHEMAFORGE_ENV: production
+      SCHEMAFORGE_RUNTIME_KIND: llama_server
+      SCHEMAFORGE_LLAMA_SERVER_URL: http://model-server:8080
+      SCHEMAFORGE_LLAMA_PARALLEL: ${LLAMA_PARALLEL:-1}
+      SCHEMAFORGE_LLAMA_NGL: ${LLAMA_NGL:-0}
+      SCHEMAFORGE_MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-240}
+      SCHEMAFORGE_DB_ROOT: /data/databases
+      SCHEMAFORGE_CORS_ORIGINS: ${SCHEMAFORGE_CORS_ORIGINS:?set SCHEMAFORGE_CORS_ORIGINS to your https frontend origin(s)}
+      SCHEMAFORGE_RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-20}
+      SCHEMAFORGE_TRUSTED_PROXY_HOPS: "1"
+    volumes:
+      - dbdata:/data/databases:ro # read-only for the application, on top of the read-only SQLite executor
+    networks: [edge, model]
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      SCHEMAFORGE_DOMAIN: ${SCHEMAFORGE_DOMAIN:?set SCHEMAFORGE_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+
+networks:
+  edge: {}
+  model:
+    internal: true # no route to the internet or the host; only backend + model-server are attached
+
+volumes:
+  dbdata: {}
+  caddy_data: {}
+  caddy_config: {}

@@ -233,6 +233,8 @@ function fromError(e: ApiError): Failure {
         return { ...base, kind: "unknown_database", tone: "warning", title: "That database isn't registered", message: "The selected database is no longer available from the backend.", hint: "Reload the database list and choose another.", retryable: false };
       if (e.code === "database_unavailable")
         return { ...base, kind: "database_unavailable", tone: "warning", title: "The database is unavailable", message: "It's registered, but its file couldn't be opened right now.", hint: "Check the database on the machine running the backend.", retryable: true };
+      if (e.code === "rate_limited")
+        return { ...base, kind: "model_busy", tone: "warning", title: "Too many requests", message: "This public demo limits how many queries each visitor can run per minute.", hint: "Wait a moment and try again.", retryable: true };
       if (e.code === "invalid_request")
         return {
           ...base,

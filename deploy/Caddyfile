@@ -1,0 +1,26 @@
+# Public entry point: automatic HTTPS (Let's Encrypt) in front of the FastAPI backend ONLY.
+# SCHEMAFORGE_DOMAIN must be a DNS name pointing at this host (a free <ip>.sslip.io name works).
+{$SCHEMAFORGE_DOMAIN} {
+	encode zstd gzip
+	request_body {
+		max_size 64KB
+	}
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+		Strict-Transport-Security "max-age=31536000"
+	}
+	# Caddy sets X-Forwarded-For to the real client address (client-supplied values are discarded);
+	# the backend trusts exactly this one hop (SCHEMAFORGE_TRUSTED_PROXY_HOPS=1).
+	reverse_proxy backend:8000 {
+		health_uri /health
+		health_interval 15s
+		transport http {
+			response_header_timeout 300s
+		}
+	}
+	log {
+		output stdout
+		format json
+	}
+}

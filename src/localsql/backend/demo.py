@@ -67,3 +67,9 @@ def create_demo_database(path: Path) -> Path:
     finally:
         conn.close()
     return path
+
+
+if __name__ == "__main__":  # container seeding: python -m localsql.backend.demo /data/databases/demo.sqlite
+    import sys
+
+    create_demo_database(Path(sys.argv[1]))

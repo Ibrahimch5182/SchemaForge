@@ -23,6 +23,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from localsql.backend.errors import BackendError, DatabaseUnavailableError, UnknownDatabaseError
 from localsql.backend.models import QueryRequest, QueryResponse
 from localsql.backend.observability import get_logger, log_event
+from localsql.backend.ratelimit import SlidingWindowLimiter, client_key
 from localsql.backend.service import QueryService
 from localsql.backend.taxonomy import RETRY_AFTER_SECONDS, http_status
 
@@ -45,15 +46,45 @@ def _error_body(request: Request, code: str, message: str, fields: Optional[list
     return {"request_id": _request_id(request), "error": err}
 
 
-def create_app(service: QueryService, cors_origins: Sequence[str] = ()) -> FastAPI:
-    app = FastAPI(title="SchemaForge", version="0.8.0")
+def create_app(
+    service: QueryService,
+    cors_origins: Sequence[str] = (),
+    *,
+    production: bool = False,
+    rate_limit_per_minute: int = 0,
+    trusted_proxy_hops: int = 0,
+    max_body_bytes: int = 65536,
+) -> FastAPI:
+    """`production=True` hides the interactive API docs. `rate_limit_per_minute>0`
+    limits POST /query per client (Phase 11 public demo); `trusted_proxy_hops` says how
+    many reverse proxies append to X-Forwarded-For. Oversized bodies are refused."""
+    docs = {"docs_url": None, "redoc_url": None, "openapi_url": None} if production else {}
+    app = FastAPI(title="SchemaForge", version="0.11.0", **docs)
     app.state.query_service = service
     log = get_logger()
+    limiter = SlidingWindowLimiter(rate_limit_per_minute) if rate_limit_per_minute > 0 else None
+    app.state.rate_limiter = limiter
+
+    def _early(request: Request, status: int, code: str, message: str, headers: Optional[dict] = None) -> JSONResponse:
+        resp = JSONResponse(_error_body(request, code, message), status_code=status, headers=headers)
+        resp.headers[REQUEST_ID_HEADER] = request.state.request_id
+        return resp
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next: Callable):
         supplied = request.headers.get(REQUEST_ID_HEADER, "")
         request.state.request_id = supplied if _REQUEST_ID_RE.match(supplied) else uuid.uuid4().hex
+        if request.method == "POST":
+            declared = request.headers.get("content-length", "")
+            if declared and (not declared.isdigit() or int(declared) > max_body_bytes):
+                # A declared length is enforced here; the reverse proxy additionally caps streamed bodies.
+                return _early(request, 413, "payload_too_large", "Request body is too large.")
+            if limiter is not None and request.url.path == "/query":
+                key = client_key(request.client.host if request.client else None, request.headers.get("x-forwarded-for"), trusted_proxy_hops)
+                allowed, retry = limiter.check(key)
+                if not allowed:
+                    log_event(log, "api.rate_limited", level=30, request_id=request.state.request_id, retry_after_s=retry)
+                    return _early(request, 429, "rate_limited", "Too many requests. Try again shortly.", {"Retry-After": str(retry)})
         response = await call_next(request)
         response.headers[REQUEST_ID_HEADER] = request.state.request_id
         return response
@@ -66,7 +97,7 @@ def create_app(service: QueryService, cors_origins: Sequence[str] = ()) -> FastA
             allow_origins=list(cors_origins),
             allow_methods=["GET", "POST"],
             allow_headers=["Content-Type", REQUEST_ID_HEADER],
-            expose_headers=[REQUEST_ID_HEADER],
+            expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
             allow_credentials=False,
             max_age=600,
         )
@@ -132,7 +163,11 @@ def create_app(service: QueryService, cors_origins: Sequence[str] = ()) -> FastA
 def create_app_from_env() -> FastAPI:
     """Uvicorn factory: builds the service from configs/backend.yaml + env."""
     from localsql.backend.bootstrap import build_query_service
-    from localsql.backend.config import cors_origins, load_backend_config
+    from localsql.backend.config import api_limits, cors_origins, is_production, load_backend_config, validate_production_cors
 
     cfg = load_backend_config()
-    return create_app(build_query_service(cfg), cors_origins=cors_origins(cfg))
+    origins = cors_origins(cfg)
+    production = is_production()
+    if production:
+        validate_production_cors(origins)  # fail fast: explicit https allow-list only
+    return create_app(build_query_service(cfg), cors_origins=origins, production=production, **api_limits(cfg))

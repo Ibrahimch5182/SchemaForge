@@ -42,6 +42,20 @@ the full chronological
 engineering journal. Do not implement later phases unless explicitly
 asked.
 
+**Phase 11 (persistent serving / deployment readiness) is IMPLEMENTED at
+the implementation gate only.** `localsql.backend.server_runtime.LlamaServerRuntime`
+serves the frozen Q4_K_M + hot LoRA through a persistent private `llama-server`
+(`SCHEMAFORGE_RUNTIME_KIND=llama_server`); the Phase 8 subprocess runtime stays
+the development/fallback default. Docker/Compose (`docker/`, `docker-compose*.yml`,
+`deploy/`), production CORS/rate-limit/body-limit, Vercel config and an AWS
+runbook exist (`docs/PHASE11.md`). Local `scripts/canary_phase11.py` PASSED.
+**The overall Phase 11 gate is manual and NOT done**: real Vercel -> public HTTPS
+AWS backend -> persistent model server -> real query, from another device, then
+terminate all AWS resources. Never create AWS resources or use AWS credentials
+automatically; the cloud proof must cost $0 and CPU serving must stay supported
+(GPU is optional). Set `LLAMA_THREADS` to the host's physical cores/vCPUs -- the
+default `-t -1` was measured 30x slower on a shared/SMT host.
+
 ## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`, `docs/CONTEXT_BUDGET.md`)
 
 ```
@@ -86,8 +100,8 @@ User question --> schema introspection --> fine-tuned model
    `api` group (`fastapi`, `uvicorn`, `httpx`) for the backend API only;
    `localsql.backend.service` itself must stay free of FastAPI imports.
 8. Do not implement future phases early (Phase 8 backend and Phase 9
-   frontend exist; still no agents, no auth, no cloud/vLLM, no PostgreSQL
-   yet). The frontend (`frontend/`, Vite + React + TypeScript, npm) is
+   frontend exist; still no agents, no auth, no vLLM, no PostgreSQL
+   yet; Phase 11 adds only single-host Docker/persistent llama.cpp serving). The frontend (`frontend/`, Vite + React + TypeScript, npm) is
    separate from the Python package and must only use the Phase 8 API -- no
    database access, SQL safety, execution or model logic in it, no
    `dangerouslySetInnerHTML`, no arbitrary-SQL input.
@@ -199,6 +213,10 @@ uv run pytest -q
   DB-aware preflight, bounded inference gate, cancellation, error taxonomy
   (`localsql/backend/taxonomy.py`), /ready, and the real product reliability
   canary (`scripts/canary_phase10.py`, not a model benchmark).
+- `docs/PHASE11.md` -- Phase 11: persistent llama.cpp serving
+  (`localsql.backend.server_runtime`), prompt parity, Docker/Compose, public
+  networking (CORS/rate limit), AWS zero-cost runbook, Vercel, serving canary
+  (`scripts/canary_phase11.py`); manual cloud gate still open.
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.

@@ -1,0 +1,19 @@
+# OPTIONAL GPU offload (needs an NVIDIA GPU host + nvidia-container-toolkit). Not required anywhere.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+services:
+  model-server:
+    build:
+      args:
+        LLAMA_CPP_IMAGE: ${LLAMA_CPP_GPU_IMAGE:-ghcr.io/ggml-org/llama.cpp:server-cuda-b10964}
+    environment:
+      LLAMA_NGL: ${LLAMA_NGL:-99}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+  backend:
+    environment:
+      SCHEMAFORGE_LLAMA_NGL: ${LLAMA_NGL:-99}

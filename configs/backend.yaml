@@ -26,6 +26,9 @@ execution:
   max_sql_chars: 20000
 
 runtime:
+  # llama_cpp   = per-request subprocess (Phase 8-10; development / fallback).
+  # llama_server = persistent llama.cpp HTTP server (Phase 11; production). Select with
+  #   SCHEMAFORGE_RUNTIME_KIND=llama_server + SCHEMAFORGE_LLAMA_SERVER_URL (never committed).
   kind: llama_cpp
   # Inference settings (context, max tokens, seed, greedy decoding) come from
   # the Phase 7 config so serving matches what was benchmarked.
@@ -38,6 +41,13 @@ runtime:
   max_concurrent_generations: 1
   max_waiting_requests: 2
   queue_wait_seconds: 20
+  # Persistent-server client (kind: llama_server). With that kind, concurrency = the server's
+  # --parallel slots (SCHEMAFORGE_LLAMA_PARALLEL, default 1); the wait queue above stays bounded.
+  server:
+    connect_timeout_seconds: 3
+    readiness_timeout_seconds: 2
+    readiness_cache_seconds: 1
+    cache_prompt: false        # deterministic cold prefill; true reuses the KV prefix (faster, not bit-identical)
 
 api:
   # Browser origins allowed to call this API (Phase 9 frontend dev/preview servers).
@@ -45,6 +55,12 @@ api:
   cors_allowed_origins:
     - http://localhost:5173
     - http://127.0.0.1:5173
+  # Public-demo protections (Phase 11). Env overrides: SCHEMAFORGE_RATE_LIMIT_PER_MINUTE,
+  # SCHEMAFORGE_TRUSTED_PROXY_HOPS, SCHEMAFORGE_MAX_BODY_BYTES. SCHEMAFORGE_ENV=production
+  # additionally requires an explicit https CORS allow-list and hides /docs.
+  rate_limit_per_minute: 0     # per-client POST /query; 0 = off (compose enables 20)
+  trusted_proxy_hops: 0        # reverse proxies in front (compose/Caddy: 1)
+  max_body_bytes: 65536
 
 logging:
   level: INFO

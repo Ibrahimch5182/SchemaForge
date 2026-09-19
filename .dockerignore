@@ -1,0 +1,25 @@
+# Keep the build context tiny and free of secrets / model weights / research data.
+.git
+.gitignore
+.venv
+.artifacts
+.pytest_tmp
+.pytest_cache
+__pycache__
+*.pyc
+*.gguf
+*.safetensors
+*.bin
+*.zip
+*.ipynb
+.env
+.env.*
+data/
+kaggle-*/
+train_token_profile.json
+tests/
+docs/
+scripts/
+frontend/node_modules
+frontend/dist
+frontend/.env*
