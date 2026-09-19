@@ -241,3 +241,14 @@ def test_sanity_comparison_requires_same_lora_for_f16_and_q4():
         compare_generations(_doc2("L1", ["SELECT 1"]), _doc2("L2", ["SELECT 1"]))
     with pytest.raises(ValueError, match="SAME LoRA"):
         compare_generations(_doc2("L", ["SELECT 1"]), _doc("BASE", ["SELECT 1"]))
+
+
+def test_prompt_trailing_newline_guard_compensates_for_llama_cpp_file_trim(monkeypatch):
+    """llama.cpp `-f` strips one trailing newline; the guard adds one so the model sees `assistant\n`."""
+    seen = _patch_process(monkeypatch, ProcessResult(0, "SELECT 1", PERF_STDERR, 10.0, False, None, "n/a"))
+    runtime.run_gguf_once("P", SETTINGS)  # default: frozen Phase 7 behavior, unchanged
+    assert seen["prompt"] == b"<|im_start|>user\nP<|im_end|>\n<|im_start|>assistant\n"
+    guarded = LlamaSettings(**{**SETTINGS.__dict__, "guard_prompt_trailing_newline": True})
+    runtime.run_gguf_once("P", guarded)
+    assert seen["prompt"] == b"<|im_start|>user\nP<|im_end|>\n<|im_start|>assistant\n\n"
+    assert runtime.settings_dict(guarded)["guard_prompt_trailing_newline"] is True

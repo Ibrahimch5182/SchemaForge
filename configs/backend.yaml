@@ -1,0 +1,37 @@
+# SchemaForge Phase 8 backend configuration.
+#
+# Machine-specific paths are NEVER committed. The model runtime is configured
+# through environment variables (see localsql.backend.config):
+#   SCHEMAFORGE_LLAMA_EXE     path to llama-completion(.exe)
+#   SCHEMAFORGE_BASE_GGUF     Q4_K_M base GGUF
+#   SCHEMAFORGE_LORA_GGUF     LoRA GGUF (hot-loaded with --lora)
+#   SCHEMAFORGE_LLAMA_THREADS optional CPU threads
+#   SCHEMAFORGE_LLAMA_NGL     optional GPU layers (default 0 = CPU)
+#   SCHEMAFORGE_DB_ROOT       optional override of databases.root
+#   SCHEMAFORGE_BACKEND_CONFIG optional path to an alternative copy of this file
+
+databases:
+  # Allowed root: every registered `file` must resolve INSIDE this directory.
+  # Relative paths are resolved against the repository root.
+  root: .artifacts/phase8/databases
+  entries:
+    - id: demo
+      file: demo.sqlite
+      dialect: sqlite
+      description: Deterministic demo database (created by scripts/smoke_phase8.py).
+
+execution:
+  timeout_seconds: 10
+  max_rows: 500
+  max_sql_chars: 20000
+
+runtime:
+  kind: llama_cpp
+  # Inference settings (context, max tokens, seed, greedy decoding) come from
+  # the Phase 7 config so serving matches what was benchmarked.
+  phase7_config: configs/phase7.yaml
+  # Per-request generation timeout (overrides phase7 inference.timeout_seconds).
+  timeout_seconds: 300
+
+logging:
+  level: INFO

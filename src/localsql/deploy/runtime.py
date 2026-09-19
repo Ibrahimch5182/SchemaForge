@@ -54,6 +54,12 @@ class LlamaSettings:
     no_conversation_flag: bool = True
     extra_args: tuple[str, ...] = ()
     lora: Optional[Path] = None  # LoRA GGUF loaded at runtime (primary deployment mode)
+    # llama.cpp's `-f` strips ONE trailing newline from the prompt file, so the ChatML
+    # envelope's final `assistant<newline>` reaches the model as `assistant` (measured on b10964:
+    # 9 vs 10 tokens). That train/serve drift makes the model emit a leading newline/space/`:`.
+    # True writes one extra newline so exactly `assistant<newline>` is tokenized. Default False keeps
+    # the frozen Phase 7 benchmark behavior reproducible; the Phase 8 backend enables it.
+    guard_prompt_trailing_newline: bool = False
 
 
 def build_llama_command(settings: LlamaSettings, prompt_file: Path) -> list[str]:
@@ -140,7 +146,7 @@ def run_gguf_once(canonical_prompt: str, settings: LlamaSettings, work_dir: Opti
         prompt_file = Path(td) / "prompt.txt"
         # newline="" keeps bytes exact (no CRLF translation on Windows).
         with prompt_file.open("w", encoding="utf-8", newline="") as f:
-            f.write(build_chatml_prompt(canonical_prompt))
+            f.write(build_chatml_prompt(canonical_prompt) + ("\n" if settings.guard_prompt_trailing_newline else ""))
         cmd = build_llama_command(settings, prompt_file)
         result: ProcessResult = run_captured(cmd, timeout=settings.timeout_seconds)
 
@@ -198,6 +204,7 @@ def settings_dict(settings: LlamaSettings) -> dict:
         "timeout_seconds": settings.timeout_seconds,
         "no_conversation_flag": settings.no_conversation_flag,
         "extra_args": list(settings.extra_args),
+        "guard_prompt_trailing_newline": settings.guard_prompt_trailing_newline,
         "sampling": "greedy (--temp 0 --top-k 1)",
         "prompt_envelope": "qwen_chatml_single_user_turn",
     }

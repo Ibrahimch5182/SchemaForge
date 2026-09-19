@@ -66,8 +66,9 @@ User question --> schema introspection --> fine-tuned model
    requirement, checked and asserted in code.
 3. Model output contract is SQL only: no markdown fences, no `SQL:`
    prefix, no chain-of-thought, no commentary.
-4. SQL execution will eventually be read-only and deterministically
-   validated (not implemented yet).
+4. SQL execution is read-only and deterministically validated
+   (Phase 8: `localsql.backend` -- AST safety policy + independent
+   read-only SQLite executor; unsafe SQL never reaches execution).
 5. No LangGraph, no agent framework, no RAG/vector DB, no MCP.
 6. Do not alter the ML methodology (model choice, QLoRA, dataset choice)
    without explicit user instruction.
@@ -81,9 +82,11 @@ User question --> schema introspection --> fine-tuned model
    transformers/accelerate/bitsandbytes, install alongside `model`, never
    reinstall Kaggle's own torch build). Not installed on this Windows
    machine; `localsql.model.*` and `localsql.train.*` use lazy imports so
-   both stay importable without them.
-8. Do not implement future phases early (no FastAPI, no frontend, no
-   agents, no model download/training on this machine).
+   both stay importable without them. Phase 8 added a default-installed
+   `api` group (`fastapi`, `uvicorn`, `httpx`) for the backend API only;
+   `localsql.backend.service` itself must stay free of FastAPI imports.
+8. Do not implement future phases early (Phase 8 backend exists; still no
+   frontend, no agents, no auth, no cloud/vLLM, no PostgreSQL yet).
 9. The official BIRD Mini-Dev evaluator (`evaluation_ex.py`,
    `evaluation_f1.py`, `evaluation_utils.py`) is vendored unmodified at a
    pinned commit and imported directly, never copy-pasted/edited. If it
@@ -181,7 +184,10 @@ uv run pytest -q
 - `docs/CONTEXT_BUDGET.md` -- Phase 5A: schema-context analysis, compact
   serialization, deterministic budgeter, open decisions (not final).
 - `docs/PHASE7.md` -- Phase 7: llama.cpp GGUF quantization + local inference
-  tooling (`configs/phase7.yaml`, `localsql.deploy`); conversion not yet run.
+  tooling (`configs/phase7.yaml`, `localsql.deploy`); PASSED (Q4_K_M + hot LoRA).
+- `docs/PHASE8.md` -- Phase 8: production backend (`localsql.backend`,
+  `configs/backend.yaml`): registry, introspection, safety, read-only
+  executor, QueryService, FastAPI + CLI, smoke test.
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.

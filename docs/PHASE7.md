@@ -174,6 +174,18 @@ F16 base + LoRA vs Q4_K_M base + the **same** LoRA, on the fixed deterministic
 - Training-time NF4 and deployment-time Q4_K_M remain separate; the deployed
   base differs numerically from what Phases 3-6 evaluated.
 
+## Note: prompt-file trailing newline (added after Phase 8)
+
+Phase 7 benchmark and sanity evidence remains **frozen and reproducible**; the
+recorded measurements above are unchanged. Those historical runs used the
+then-current llama.cpp prompt-file behavior, without the trailing-newline
+guard: `-f` strips the final newline, so the model saw `assistant` instead of
+`assistant<newline>`. Phase 8 production serving corrected this train/serve drift
+(`LlamaSettings.guard_prompt_trailing_newline=True`; the Phase 7 default stays
+`False` so the recorded runs stay reproducible). See `docs/PHASE8.md`. The
+Phase 7 numbers should be read as measured under that historical prompt
+behavior; they were not re-run or altered.
+
 ## Phase 7 PASS criteria — met
 
 - Adapter and base contract validated; manifest written.
