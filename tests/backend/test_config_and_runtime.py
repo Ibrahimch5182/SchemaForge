@@ -73,7 +73,7 @@ def _settings(tmp_path):
 
 
 def _run(status="ok", raw="SELECT 1\n", error=None):
-    def run(prompt, settings):
+    def run(prompt, settings, **_kw):
         run.calls.append((prompt, settings))
         return GgufRun(status, raw if status == "ok" else None, None, 1234.0,
                        {"prompt_tokens": 50, "generated_tokens": 5, "generated_tokens_per_second": 10.5,
@@ -100,8 +100,9 @@ def test_llama_runtime_failure_message_is_generic(tmp_path):
         rt.generate("p")
     assert "secret" not in e.value.message
     rt = LlamaCppRuntime(_settings(tmp_path), run=_run("timeout"))
-    with pytest.raises(ModelRuntimeError, match="timeout"):
+    with pytest.raises(ModelRuntimeError) as t:
         rt.generate("p")
+    assert t.value.code == "model_timeout"
 
 
 def test_llama_runtime_requires_lora_and_existing_files(tmp_path):

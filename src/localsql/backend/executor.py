@@ -19,9 +19,10 @@ from __future__ import annotations
 import math
 import sqlite3
 import time
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
-from localsql.backend.errors import ExecutionError
+from localsql.backend.control import CancelToken
+from localsql.backend.errors import ExecutionError, RequestCancelledError
 from localsql.backend.models import ExecutionResult
 from localsql.backend.registry import RegisteredDatabase
 from localsql.backend.sqlite_conn import open_readonly
@@ -35,10 +36,10 @@ _PROGRESS_OPS = 1000  # VM opcodes between deadline checks
 
 
 class ReadOnlyExecutor(Protocol):
-    def execute(self, db: RegisteredDatabase, sql: str) -> ExecutionResult: ...
+    def execute(self, db: RegisteredDatabase, sql: str, cancel: Optional[CancelToken] = None) -> ExecutionResult: ...
 
 
-def _authorizer(action: int, arg1: Any, arg2: Any, dbname: Any, source: Any) -> int:
+def read_only_authorizer(action: int, arg1: Any, arg2: Any, dbname: Any, source: Any) -> int:
     if action in (_SQLITE_SELECT, _SQLITE_RECURSIVE):
         return _SQLITE_OK
     if action == _SQLITE_READ:
@@ -51,6 +52,9 @@ def _authorizer(action: int, arg1: Any, arg2: Any, dbname: Any, source: Any) -> 
             return _SQLITE_DENY
         return _SQLITE_OK
     return _SQLITE_DENY
+
+
+READ_ONLY_AUTHORIZER = read_only_authorizer
 
 
 def _json_safe(value: Any) -> Any:
@@ -70,13 +74,15 @@ class SQLiteReadOnlyExecutor:
         self._timeout = float(timeout_seconds)
         self._max_rows = int(max_rows)
 
-    def execute(self, db: RegisteredDatabase, sql: str) -> ExecutionResult:
+    def execute(self, db: RegisteredDatabase, sql: str, cancel: Optional[CancelToken] = None) -> ExecutionResult:
         start = time.monotonic()
         deadline = start + self._timeout
         timed_out = False
 
         def progress() -> int:
             nonlocal timed_out
+            if cancel is not None and cancel.cancelled:
+                return 1  # non-zero aborts the running statement
             if time.monotonic() > deadline:
                 timed_out = True
                 return 1  # non-zero aborts the running statement
@@ -84,13 +90,15 @@ class SQLiteReadOnlyExecutor:
 
         conn = open_readonly(db.path)
         try:
-            conn.set_authorizer(_authorizer)
+            conn.set_authorizer(READ_ONLY_AUTHORIZER)
             conn.set_progress_handler(progress, _PROGRESS_OPS)
             try:
                 cursor = conn.execute(sql)
                 columns = [d[0] for d in (cursor.description or [])]
                 fetched = cursor.fetchmany(self._max_rows + 1)
             except sqlite3.Error as e:
+                if cancel is not None and cancel.cancelled:
+                    raise RequestCancelledError("The request was cancelled.") from None
                 raise self._map_error(e, timed_out) from None
         finally:
             conn.close()

@@ -194,6 +194,11 @@ uv run pytest -q
   executor, QueryService, FastAPI + CLI, smoke test.
 - `docs/PHASE9.md` -- Phase 9: product frontend (`frontend/`): landing +
   results presentation, query workspace, API client, tests, real smoke.
+- `docs/PHASE10.md` -- Phase 10: reliability/hardening: safety-vs-correctness
+  trust model (`QueryResponse.reliability`; NEVER invent a confidence score),
+  DB-aware preflight, bounded inference gate, cancellation, error taxonomy
+  (`localsql/backend/taxonomy.py`), /ready, and the real product reliability
+  canary (`scripts/canary_phase10.py`, not a model benchmark).
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.

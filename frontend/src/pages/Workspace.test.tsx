@@ -84,9 +84,9 @@ describe("Workspace: running a query", () => {
 
     const sql = await screen.findByLabelText("Generated SQL");
     expect(sql).toHaveTextContent("SELECT COUNT(emp_id) FROM employees");
-    expect(screen.getByText(/safety passed/i)).toBeInTheDocument();
-    expect(screen.getByText("Read-only")).toBeInTheDocument();
-    expect(screen.getByText("Query completed")).toBeInTheDocument();
+    expect(screen.getByText("Safety verified")).toBeInTheDocument();
+    expect(screen.getByText("Read-only execution")).toBeInTheDocument();
+    expect(screen.getByText("Query executed successfully")).toBeInTheDocument();
 
     const table = screen.getByRole("region", { name: /query results table/i });
     expect(within(table).getByRole("columnheader", { name: "COUNT(emp_id)" })).toBeInTheDocument();
@@ -143,7 +143,7 @@ describe("Workspace: running a query", () => {
     expect(screen.getByLabelText(/your question/i)).toBeDisabled();
 
     d.resolve(makeResponse());
-    expect(await screen.findByText("Query completed")).toBeInTheDocument();
+    expect(await screen.findByText("Query executed successfully")).toBeInTheDocument();
     expect(screen.queryByRole("status", { name: /generating sql/i })).not.toBeInTheDocument();
   });
 
@@ -163,7 +163,7 @@ describe("Workspace: results", () => {
     const response = makeResponse({ result: { columns: ["n"], rows, returned_row_count: 500, truncated: true, max_rows: 500, elapsed_ms: 3 } });
     const { user } = await ready(makeApi({ query: vi.fn().mockResolvedValue(response) }));
     await ask(user);
-    const note = await screen.findByRole("note");
+    const note = await screen.findByRole("note", { name: /results truncated/i });
     expect(note).toHaveTextContent("Results truncated");
     expect(note).toHaveTextContent("500 rows");
     expect(note).toHaveTextContent("The total isn't known");
@@ -181,7 +181,7 @@ describe("Workspace: results", () => {
     });
     const { container, user } = await ready(makeApi({ query: vi.fn().mockResolvedValue(response) }));
     await ask(user);
-    await screen.findByText("Query completed");
+    await screen.findByText("Query executed successfully");
     expect(screen.getByText("NULL")).toBeInTheDocument();
     expect(screen.getByText("true")).toBeInTheDocument();
     expect(screen.getByText("1,234,567")).toBeInTheDocument();
@@ -233,7 +233,7 @@ describe("Workspace: results", () => {
   it("does not offer a chart for a single value", async () => {
     const { user } = await ready();
     await ask(user);
-    await screen.findByText("Query completed");
+    await screen.findByText("Query executed successfully");
     expect(screen.queryByRole("group", { name: /result view/i })).not.toBeInTheDocument();
   });
 });
@@ -283,7 +283,7 @@ describe("Workspace: failure states are intentional", () => {
     const { user } = await ready(makeApi({ query }));
     await ask(user);
     await user.click(await screen.findByRole("button", { name: /try again/i }));
-    expect(await screen.findByText("Query completed")).toBeInTheDocument();
+    expect(await screen.findByText("Query executed successfully")).toBeInTheDocument();
     expect(query).toHaveBeenCalledTimes(2);
     expect(query.mock.calls[1]![0]).toEqual(query.mock.calls[0]![0]);
   });
@@ -301,7 +301,7 @@ describe("Workspace: session history", () => {
   it("records queries and reopens them without calling the backend again", async () => {
     const { api, user } = await ready();
     await ask(user);
-    await screen.findByText("Query completed");
+    await screen.findByText("Query executed successfully");
     const item = await screen.findByRole("button", { name: new RegExp(Q.slice(0, 20), "i") });
     fireEvent.change(screen.getByLabelText(/your question/i), { target: { value: "something else" } });
     await user.click(item);
@@ -313,7 +313,7 @@ describe("Workspace: session history", () => {
   it("clears history", async () => {
     const { user } = await ready();
     await ask(user);
-    await screen.findByText("Query completed");
+    await screen.findByText("Query executed successfully");
     await user.click(await screen.findByRole("button", { name: /^clear$/i }));
     expect(screen.queryByText(/this session/i)).not.toBeInTheDocument();
   });

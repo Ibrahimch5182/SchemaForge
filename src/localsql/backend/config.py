@@ -57,6 +57,10 @@ class RuntimeConfig(_Frozen):
     kind: str
     phase7_config: str
     timeout_seconds: float = Field(gt=0)
+    # Bounded inference concurrency (each request = one multi-GB llama.cpp process).
+    max_concurrent_generations: int = Field(default=1, ge=1)
+    max_waiting_requests: int = Field(default=2, ge=0)
+    queue_wait_seconds: float = Field(default=20.0, ge=0)
 
 
 class ApiConfig(_Frozen):

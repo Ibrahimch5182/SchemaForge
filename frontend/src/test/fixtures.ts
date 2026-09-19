@@ -50,7 +50,7 @@ export function makeResponse(over: Partial<QueryResponse> = {}): QueryResponse {
   };
 }
 
-export function failureResponse(status: QueryResponse["status"], stage: "model" | "safety" | "execution" | "schema", code: string, over: Partial<QueryResponse> = {}): QueryResponse {
+export function failureResponse(status: QueryResponse["status"], stage: "model" | "safety" | "preflight" | "execution" | "schema", code: string, over: Partial<QueryResponse> = {}): QueryResponse {
   return makeResponse({ status, result: null, error: { stage, code, message: `${code} message` }, ...over });
 }
 

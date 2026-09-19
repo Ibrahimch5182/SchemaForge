@@ -13,7 +13,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from localsql.deploy.provenance import artifact_record
 from localsql.deploy.process import ProcessResult, format_command, run_captured
@@ -125,7 +125,7 @@ def clean_completion(stdout: str) -> tuple[str, bool]:
 
 @dataclass(frozen=True)
 class GgufRun:
-    status: str  # "ok" | "error" | "timeout"
+    status: str  # "ok" | "error" | "timeout" | "cancelled"
     raw_completion: Optional[str]
     predicted_sql: Optional[str]
     latency_ms: float
@@ -138,7 +138,12 @@ class GgufRun:
     error: Optional[str]
 
 
-def run_gguf_once(canonical_prompt: str, settings: LlamaSettings, work_dir: Optional[Path] = None) -> GgufRun:
+def run_gguf_once(
+    canonical_prompt: str,
+    settings: LlamaSettings,
+    work_dir: Optional[Path] = None,
+    should_cancel: Optional[Callable[[], bool]] = None,
+) -> GgufRun:
     """One inference process (model is loaded per call). Never raises on a
     tool failure -- returns status/error so callers can record and set the
     exit code."""
@@ -148,7 +153,7 @@ def run_gguf_once(canonical_prompt: str, settings: LlamaSettings, work_dir: Opti
         with prompt_file.open("w", encoding="utf-8", newline="") as f:
             f.write(build_chatml_prompt(canonical_prompt) + ("\n" if settings.guard_prompt_trailing_newline else ""))
         cmd = build_llama_command(settings, prompt_file)
-        result: ProcessResult = run_captured(cmd, timeout=settings.timeout_seconds)
+        result: ProcessResult = run_captured(cmd, timeout=settings.timeout_seconds, should_cancel=should_cancel)
 
     perf = parse_perf(result.stderr)
     base = dict(
@@ -159,6 +164,8 @@ def run_gguf_once(canonical_prompt: str, settings: LlamaSettings, work_dir: Opti
         command=cmd,
         returncode=result.returncode,
     )
+    if result.cancelled:
+        return GgufRun("cancelled", None, None, end_of_text_marker_stripped=False, error="cancelled", **base)
     if result.timed_out:
         return GgufRun("timeout", None, None, end_of_text_marker_stripped=False,
                        error=f"timed out after {settings.timeout_seconds}s", **base)  # fmt: skip

@@ -2,7 +2,8 @@
 
     uv run uvicorn localsql.backend.api:create_app_from_env --factory
 
-Endpoints: GET /health, GET /databases, POST /query. Every response carries an
+Endpoints: GET /health, GET /ready, GET /databases, POST /query, POST /query/{id}/cancel.
+Every response carries an
 `X-Request-ID` header. Errors use one safe envelope and never echo input,
 filesystem paths, or stack traces.
 """
@@ -23,12 +24,10 @@ from localsql.backend.errors import BackendError, DatabaseUnavailableError, Unkn
 from localsql.backend.models import QueryRequest, QueryResponse
 from localsql.backend.observability import get_logger, log_event
 from localsql.backend.service import QueryService
+from localsql.backend.taxonomy import RETRY_AFTER_SECONDS, http_status
 
 REQUEST_ID_HEADER = "X-Request-ID"
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{8,64}$")
-
-# QueryResponse.status -> HTTP status
-_STATUS_TO_HTTP = {"ok": 200, "unsafe_sql": 422, "execution_error": 422, "model_error": 502, "schema_error": 500}
 
 
 def get_query_service(request: Request) -> QueryService:
@@ -97,6 +96,13 @@ def create_app(service: QueryService, cors_origins: Sequence[str] = ()) -> FastA
     def health(svc: QueryService = Depends(get_query_service)) -> dict:
         return svc.health()
 
+    @app.get("/ready")
+    def ready(svc: QueryService = Depends(get_query_service)):
+        """Readiness: 200 when a model runtime is configured with its artifacts
+        present and a database is registered; 503 otherwise. Never runs inference."""
+        info = svc.readiness()
+        return JSONResponse(info, status_code=200 if info["ready"] else 503)
+
     @app.get("/databases")
     def databases(svc: QueryService = Depends(get_query_service)) -> dict:
         return {"databases": svc.list_databases()}
@@ -106,12 +112,19 @@ def create_app(service: QueryService, cors_origins: Sequence[str] = ()) -> FastA
     @app.post("/query", response_model=QueryResponse)
     def query(body: QueryRequest, request: Request, svc: QueryService = Depends(get_query_service)):
         resp = svc.query(body, request_id=request.state.request_id)
-        code = _STATUS_TO_HTTP.get(resp.status, 500)
-        if resp.error and resp.error.code == "timeout":
-            code = 504
-        if resp.error and resp.error.code == "model_not_configured":
-            code = 503
-        return JSONResponse(resp.model_dump(mode="json"), status_code=code)
+        error_code = resp.error.code if resp.error else None
+        headers = {}
+        if error_code in RETRY_AFTER_SECONDS:
+            headers["Retry-After"] = str(RETRY_AFTER_SECONDS[error_code])
+        return JSONResponse(resp.model_dump(mode="json"), status_code=http_status(resp.status, error_code), headers=headers)
+
+    @app.post("/query/{target_request_id}/cancel")
+    def cancel_query(target_request_id: str, svc: QueryService = Depends(get_query_service)):
+        """Best-effort, idempotent: stops an in-flight query (kills the model
+        process / interrupts SQLite). `cancelled` is False if it is unknown or already finished."""
+        if not _REQUEST_ID_RE.match(target_request_id):
+            return JSONResponse({"request_id": target_request_id[:64], "cancelled": False})
+        return {"request_id": target_request_id, "cancelled": svc.cancel(target_request_id)}
 
     return app
 

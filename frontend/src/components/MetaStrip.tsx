@@ -84,6 +84,10 @@ export function MetaStrip({ response }: { response: QueryResponse }) {
             <dd>{formatMs(t.safety_ms)}</dd>
           </div>
           <div>
+            <dt>Schema validation</dt>
+            <dd>{formatMs(t.preflight_ms)}</dd>
+          </div>
+          <div>
             <dt>Row cap</dt>
             <dd>{r ? r.max_rows.toLocaleString("en-US") : "—"}</dd>
           </div>

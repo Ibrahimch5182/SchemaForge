@@ -56,10 +56,10 @@ export function ForgeDemo() {
         <div className={`forge-result ${sqlDone ? "is-in" : ""}`}>
           <div className="forge-badges">
             <span className="badge badge-ok">
-              <Shield size={13} /> Safety passed
+              <Shield size={13} /> Safety verified
             </span>
             <span className="badge badge-neutral">
-              <Lock size={13} /> Read-only
+              <Lock size={13} /> Read-only execution
             </span>
           </div>
           <div className="forge-value">

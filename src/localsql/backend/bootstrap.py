@@ -11,9 +11,11 @@ from typing import Mapping, Optional
 
 from localsql.backend.config import BackendConfig, database_root, llama_settings_from_env, load_backend_config
 from localsql.backend.errors import BackendError
+from localsql.backend.control import InferenceGate
 from localsql.backend.executor import SQLiteReadOnlyExecutor
 from localsql.backend.introspection import SQLiteSchemaIntrospector
 from localsql.backend.observability import configure_logging
+from localsql.backend.preflight import SQLitePreflight
 from localsql.backend.registry import DatabaseRegistry
 from localsql.backend.runtime import LlamaCppRuntime, ModelRuntime, UnavailableRuntime
 from localsql.backend.safety import SQLSafetyPolicy
@@ -27,7 +29,10 @@ def build_runtime(cfg: BackendConfig, env: Optional[Mapping[str, str]] = None) -
     if cfg.runtime.kind != "llama_cpp":
         raise BackendError(f"unsupported runtime kind '{cfg.runtime.kind}'", code="config_error")
     try:
-        return LlamaCppRuntime(llama_settings_from_env(cfg, env))
+        gate = InferenceGate(
+            cfg.runtime.max_concurrent_generations, cfg.runtime.max_waiting_requests, cfg.runtime.queue_wait_seconds
+        )
+        return LlamaCppRuntime(llama_settings_from_env(cfg, env), gate=gate)
     except BackendError as e:
         return UnavailableRuntime(e.message)
 
@@ -45,6 +50,7 @@ def build_query_service(
         "sqlite": DialectBackend(
             introspector=SQLiteSchemaIntrospector(),
             executor=SQLiteReadOnlyExecutor(cfg.execution.timeout_seconds, cfg.execution.max_rows),
+            preflight=SQLitePreflight(min(cfg.execution.timeout_seconds, 5.0)),
         )
     }
     return QueryService(

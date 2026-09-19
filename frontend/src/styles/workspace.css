@@ -436,6 +436,25 @@
   flex: none;
 }
 
+.trust-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: -6px 2px 0;
+  font-size: 0.82rem;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.trust-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--steel);
+}
+.trust-note strong {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
 .sqlblock {
   margin: 0;
   border-radius: var(--radius);

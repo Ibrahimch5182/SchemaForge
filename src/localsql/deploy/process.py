@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,10 @@ class ProcessResult:
     timed_out: bool
     peak_rss_bytes: Optional[int]
     peak_rss_note: str
+    cancelled: bool = False  # killed because `should_cancel` returned True
+
+
+_CANCEL_POLL_S = 0.1
 
 
 def format_command(command: Sequence[str]) -> str:
@@ -85,6 +89,7 @@ def run_captured(
     timeout: Optional[float] = None,
     cwd: Optional[str] = None,
     poll_interval_s: float = 0.05,
+    should_cancel: Optional[Callable[[], bool]] = None,
 ) -> ProcessResult:
     """Run `command` (argv list, no shell), capture stdout/stderr as UTF-8
     (undecodable bytes replaced), and sample the process's peak working set.
@@ -117,12 +122,38 @@ def run_captured(
     thread = threading.Thread(target=sampler, daemon=True)
     thread.start()
     timed_out = False
+    cancelled = False
     try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        proc.kill()
-        out, err = proc.communicate()
+        if should_cancel is None:
+            try:
+                out, err = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                proc.kill()
+                out, err = proc.communicate()
+        else:
+            # Poll so a cancellation request can kill the process promptly.
+            deadline = None if timeout is None else time.monotonic() + timeout
+            while True:
+                try:
+                    out, err = proc.communicate(timeout=_CANCEL_POLL_S)
+                    break
+                except subprocess.TimeoutExpired:
+                    if should_cancel():
+                        cancelled = True
+                    elif deadline is not None and time.monotonic() >= deadline:
+                        timed_out = True
+                    else:
+                        continue
+                    proc.kill()
+                    out, err = proc.communicate()
+                    break
+    except BaseException:
+        # Never leave an orphaned model process behind on an unexpected error.
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+        raise
     finally:
         stop.set()
         thread.join(timeout=2)
@@ -139,11 +170,12 @@ def run_captured(
     else:
         note = "peak working set of the launched process (includes touched memory-mapped model pages)"
     return ProcessResult(
-        returncode=None if timed_out else proc.returncode,
+        returncode=None if (timed_out or cancelled) else proc.returncode,
         stdout=decode(out),
         stderr=decode(err),
         wall_ms=wall_ms,
         timed_out=timed_out,
         peak_rss_bytes=peak[0],
         peak_rss_note=note,
+        cancelled=cancelled,
     )

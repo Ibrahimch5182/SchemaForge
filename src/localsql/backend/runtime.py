@@ -6,19 +6,28 @@ service's job (`normalize_predicted_sql`), so every runtime -- local llama.cpp
 today, a persistent/cloud server later -- is normalized identically.
 
 `LlamaCppRuntime` reuses the Phase 7 hot-LoRA deployment (Q4_K_M base +
-runtime `--lora`) and its `run_gguf_once` subprocess helper unchanged.
-Limitation (inherited from Phase 7): each request starts a llama.cpp process
-and reloads the model; a persistent server runtime would replace this class.
+runtime `--lora`) and its `run_gguf_once` subprocess helper. Phase 10 makes it
+predictable: a bounded `InferenceGate` (no unbounded pile-up of multi-GB
+processes), cooperative cancellation that kills the process, stable error
+codes, and a cheap `readiness()` that never loads the model.
+Limitation (Phase 11): each request still starts a process and reloads the model.
 """
 
 from __future__ import annotations
 
-import threading
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
-from localsql.backend.errors import ModelRuntimeError, RuntimeNotConfiguredError
+from localsql.backend.control import CancelToken, InferenceGate
+from localsql.backend.errors import (
+    ModelRuntimeError,
+    ModelTimeoutError,
+    RequestCancelledError,
+    RuntimeNotConfiguredError,
+)
+from localsql.backend.observability import get_logger, log_event
 from localsql.deploy.runtime import GgufRun, LlamaSettings, run_gguf_once
 
 
@@ -32,8 +41,9 @@ class ModelGeneration:
 
 
 class ModelRuntime(Protocol):
-    def generate(self, prompt: str) -> ModelGeneration:
-        """Return the raw completion for a canonical prompt, or raise ModelRuntimeError."""
+    def generate(self, prompt: str, cancel: Optional[CancelToken] = None) -> ModelGeneration:
+        """Return the raw completion for a canonical prompt, or raise ModelRuntimeError
+        (ModelBusyError / ModelTimeoutError / ...) or RequestCancelledError."""
         ...
 
     def describe(self) -> dict[str, Any]:
@@ -48,11 +58,14 @@ class UnavailableRuntime:
     def __init__(self, reason: str):
         self._reason = reason
 
-    def generate(self, prompt: str) -> ModelGeneration:
+    def generate(self, prompt: str, cancel: Optional[CancelToken] = None) -> ModelGeneration:
         raise RuntimeNotConfiguredError(f"Model runtime is not configured: {self._reason}")
 
     def describe(self) -> dict[str, Any]:
         return {"runtime": "unavailable", "configured": False, "reason": self._reason}
+
+    def readiness(self) -> dict[str, Any]:
+        return {"ready": False, "checks": {}, "availability": None}
 
 
 class LlamaCppRuntime:
@@ -62,6 +75,8 @@ class LlamaCppRuntime:
         *,
         run: Callable[..., GgufRun] = run_gguf_once,
         check_files: bool = True,
+        gate: Optional[InferenceGate] = None,
+        logger: Optional[logging.Logger] = None,
     ):
         if settings.lora is None:
             raise ModelRuntimeError("Phase 8 requires the hot-LoRA deployment (Q4_K_M base + LoRA GGUF).")
@@ -71,15 +86,34 @@ class LlamaCppRuntime:
                     raise ModelRuntimeError(f"{label} not found.")
         self._settings = settings
         self._run = run
-        # One llama.cpp process at a time: each holds a multi-GB model.
-        self._lock = threading.Lock()
+        self._gate = gate or InferenceGate()
+        self._log = logger or get_logger()
 
-    def generate(self, prompt: str) -> ModelGeneration:
-        with self._lock:
-            result = self._run(prompt, self._settings)
+    @property
+    def gate(self) -> InferenceGate:
+        return self._gate
+
+    def generate(self, prompt: str, cancel: Optional[CancelToken] = None) -> ModelGeneration:
+        with self._gate.slot(cancel):  # raises ModelBusyError / RequestCancelledError
+            if cancel is not None and cancel.cancelled:
+                raise RequestCancelledError("The request was cancelled.")
+            result = self._run(prompt, self._settings, should_cancel=(lambda: cancel.cancelled) if cancel else None)
+        if result.status == "cancelled":
+            raise RequestCancelledError("The request was cancelled.")
+        if result.status == "timeout":
+            log_event(self._log, "runtime.timeout", level=logging.WARNING, timeout_s=self._settings.timeout_seconds)
+            raise ModelTimeoutError("Model generation timed out.")
         if result.status != "ok" or result.raw_completion is None:
-            # result.error may embed process stderr (paths); keep the public message generic.
-            raise ModelRuntimeError(f"Model generation failed ({result.status}).")
+            # Internal detail (exit code, stderr tail) goes to the log only; the API message stays generic.
+            log_event(
+                self._log,
+                "runtime.failure",
+                level=logging.ERROR,
+                status=result.status,
+                returncode=result.returncode,
+                detail=(result.error or "")[-300:],
+            )
+            raise ModelRuntimeError("Model generation failed.")
         perf = result.perf or {}
         return ModelGeneration(
             raw_completion=result.raw_completion,
@@ -93,6 +127,17 @@ class LlamaCppRuntime:
                 "end_of_text_marker_stripped": result.end_of_text_marker_stripped,
             },
         )
+
+    def readiness(self) -> dict[str, Any]:
+        """Cheap and side-effect free: stats three files and reads gate counters.
+        Never loads the model and never hashes the multi-GB artifacts."""
+        s = self._settings
+        checks = {
+            "executable": Path(s.executable).is_file(),
+            "base_gguf": Path(s.model).is_file(),
+            "lora_gguf": bool(s.lora) and Path(s.lora).is_file(),
+        }
+        return {"ready": all(checks.values()), "checks": checks, "availability": self._gate.snapshot()}
 
     def describe(self) -> dict[str, Any]:
         s = self._settings

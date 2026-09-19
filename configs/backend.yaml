@@ -31,7 +31,13 @@ runtime:
   # the Phase 7 config so serving matches what was benchmarked.
   phase7_config: configs/phase7.yaml
   # Per-request generation timeout (overrides phase7 inference.timeout_seconds).
-  timeout_seconds: 300
+  # Keep it below the frontend's VITE_QUERY_TIMEOUT_MS so the backend gives up first.
+  timeout_seconds: 120
+  # Bounded concurrency: at most N model processes at once, M more may wait up to
+  # queue_wait_seconds each; further requests are rejected immediately (model_busy).
+  max_concurrent_generations: 1
+  max_waiting_requests: 2
+  queue_wait_seconds: 20
 
 api:
   # Browser origins allowed to call this API (Phase 9 frontend dev/preview servers).

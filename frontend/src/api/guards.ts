@@ -16,6 +16,8 @@ import {
   type ModelRuntimeInfo,
   type QueryResponse,
   type QueryStatus,
+  type Reliability,
+  type StageState,
   type SafetyDecision,
   type Stage,
   type Timings,
@@ -67,8 +69,34 @@ export function parseHealth(json: unknown): HealthResponse {
     n_gpu_layers: typeof m.n_gpu_layers === "number" ? m.n_gpu_layers : undefined,
     sampling: typeof m.sampling === "string" ? m.sampling : undefined,
     reason: typeof m.reason === "string" ? m.reason : undefined,
+    ready: typeof m.ready === "boolean" ? m.ready : undefined,
+    checks: isRecord(m.checks) ? Object.fromEntries(Object.entries(m.checks).filter(([, v]) => typeof v === "boolean")) as Record<string, boolean> : undefined,
+    availability: parseAvailability(m.availability),
   };
   return { status: str(json.status, "health.status"), model_runtime: runtime };
+}
+
+function parseAvailability(v: unknown): HealthResponse["model_runtime"]["availability"] {
+  if (!isRecord(v)) return null;
+  const state = v.state;
+  if (state !== "idle" && state !== "busy" && state !== "saturated") return null;
+  const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
+  return { state, running: n(v.running), waiting: n(v.waiting), max_concurrent: n(v.max_concurrent), max_waiting: n(v.max_waiting) };
+}
+
+const STAGE_STATES: readonly string[] = ["passed", "failed", "not_run"];
+const stageState = (v: unknown): StageState => (typeof v === "string" && STAGE_STATES.includes(v) ? (v as StageState) : "not_run");
+
+function parseReliability(v: unknown): Reliability | undefined {
+  if (!isRecord(v)) return undefined; // older backend: absent, and the UI simply omits the trust note
+  return {
+    safety: stageState(v.safety),
+    preflight: stageState(v.preflight),
+    execution: stageState(v.execution),
+    semantic_correctness: "not_verified", // never anything else: no server claim can upgrade this
+    confidence: null,
+    note: typeof v.note === "string" ? v.note : "",
+  };
 }
 
 function parseSafety(v: unknown): SafetyDecision | null {
@@ -106,7 +134,12 @@ function parseError(v: unknown): ErrorInfo | null {
   if (!isRecord(v)) bad("error");
   const stage = v.stage;
   if (typeof stage !== "string" || !(STAGES as readonly string[]).includes(stage)) bad("error.stage");
-  return { stage: stage as Stage, code: str(v.code, "error.code"), message: str(v.message, "error.message") };
+  return {
+    stage: stage as Stage,
+    code: str(v.code, "error.code"),
+    message: str(v.message, "error.message"),
+    detail: typeof v.detail === "string" ? v.detail : null,
+  };
 }
 
 function parseTimings(v: unknown): Timings {
@@ -115,6 +148,7 @@ function parseTimings(v: unknown): Timings {
     schema_ms: optNum(v.schema_ms, "timings.schema_ms"),
     model_ms: optNum(v.model_ms, "timings.model_ms"),
     safety_ms: optNum(v.safety_ms, "timings.safety_ms"),
+    preflight_ms: optNum(v.preflight_ms, "timings.preflight_ms"),
     execution_ms: optNum(v.execution_ms, "timings.execution_ms"),
     total_ms: num(v.total_ms, "timings.total_ms"),
   };
@@ -146,6 +180,7 @@ export function parseQueryResponse(json: unknown): QueryResponse {
     model: isRecord(json.model) ? json.model : {},
     prompt_sha256: optStr(json.prompt_sha256, "prompt_sha256"),
     dialect: optStr(json.dialect, "dialect"),
+    reliability: parseReliability(json.reliability),
   };
   if (res.status === "ok" && !res.result) bad("ok response without a result", res.request_id);
   return res;

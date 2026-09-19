@@ -12,7 +12,11 @@ type Tone = "loading" | "ready" | "warn" | "down";
 function describe(state: HealthState): { tone: Tone; label: string } {
   if (state.status === "loading") return { tone: "loading", label: "Checking backend…" };
   if (state.status === "offline") return { tone: "down", label: "Backend offline" };
-  return state.health.model_runtime.configured ? { tone: "ready", label: "Local model ready" } : { tone: "warn", label: "Model not configured" };
+  const rt = state.health.model_runtime;
+  if (!rt.configured) return { tone: "warn", label: "Model not configured" };
+  if (rt.ready === false) return { tone: "warn", label: "Model files missing" };
+  if (rt.availability && rt.availability.state !== "idle") return { tone: "warn", label: rt.availability.state === "saturated" ? "Model saturated" : "Model busy" };
+  return { tone: "ready", label: "Local model ready" };
 }
 
 /** Backend/model availability: a compact pill that opens a details popover. */
@@ -74,6 +78,20 @@ export function StatusPill({ state, onRefresh }: Props) {
                   <div>
                     <dt>LoRA</dt>
                     <dd className="mono">{rt.lora_gguf}</dd>
+                  </div>
+                )}
+                {rt.checks && (
+                  <div>
+                    <dt>Artifacts</dt>
+                    <dd>{Object.entries(rt.checks).map(([k, ok]) => `${k.replace("_gguf", "").replace("_", " ")} ${ok ? "✓" : "✗"}`).join(" · ")}</dd>
+                  </div>
+                )}
+                {rt.availability && (
+                  <div>
+                    <dt>Availability</dt>
+                    <dd>
+                      {rt.availability.state} · {rt.availability.running}/{rt.availability.max_concurrent} running, {rt.availability.waiting}/{rt.availability.max_waiting} waiting
+                    </dd>
                   </div>
                 )}
                 {rt.context_size !== undefined && (

@@ -40,7 +40,32 @@ class RuntimeNotConfiguredError(ModelRuntimeError):
     code = "model_not_configured"
 
 
+class ModelBusyError(ModelRuntimeError):
+    """All inference slots are taken and the bounded wait queue is full/expired."""
+
+    code = "model_busy"
+
+
+class ModelTimeoutError(ModelRuntimeError):
+    code = "model_timeout"
+
+
+class RequestCancelledError(BackendError):
+    code = "cancelled"
+
+
 class ExecutionError(BackendError):
     """`code` is one of: timeout, sql_error, authorization_denied, database_unavailable."""
 
     code = "sql_error"
+
+
+class PreflightError(BackendError):
+    """The SQL is safe and parseable but invalid for THIS database (unknown
+    table/column, ...). `detail` is a short, identifier-only hint."""
+
+    code = "invalid_sql"
+
+    def __init__(self, message: str, *, code: str | None = None, detail: str | None = None):
+        super().__init__(message, code=code)
+        self.detail = detail

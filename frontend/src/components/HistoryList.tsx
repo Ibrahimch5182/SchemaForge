@@ -20,6 +20,11 @@ const LABEL: Record<string, string> = {
   model_unavailable: "Model unavailable",
   execution_error: "SQL error",
   backend_unavailable: "Backend offline",
+  model_busy: "Model busy",
+  model_timeout: "Model timed out",
+  malformed_output: "Unusable output",
+  invalid_for_database: "Invalid for database",
+  cancelled: "Cancelled",
 };
 
 /** Session-local history: revisit any earlier question and its result. Never leaves the browser tab. */

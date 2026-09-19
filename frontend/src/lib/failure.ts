@@ -11,6 +11,10 @@ export type FailureKind =
   | "unsafe_sql"
   | "model_error"
   | "model_unavailable"
+  | "model_busy"
+  | "model_timeout"
+  | "malformed_output"
+  | "invalid_for_database"
   | "execution_error"
   | "timeout"
   | "schema_error"
@@ -70,6 +74,39 @@ function fromResponse(r: QueryResponse): Failure {
           retryable: false,
         };
       }
+      if (code === "model_busy") {
+        return {
+          ...base,
+          kind: "model_busy",
+          tone: "warning",
+          title: "The local model is busy",
+          message: "Another request is using the model right now, and the queue is full. Nothing was run against your database.",
+          hint: "Wait a few seconds and try again. One local model handles a limited number of requests at a time.",
+          retryable: true,
+        };
+      }
+      if (code === "model_timeout") {
+        return {
+          ...base,
+          kind: "model_timeout",
+          tone: "warning",
+          title: "The model took too long",
+          message: "Local inference hit the backend's generation time limit and was stopped. Your database was not touched.",
+          hint: "Try a shorter question, or retry when the machine is less busy.",
+          retryable: true,
+        };
+      }
+      if (code === "malformed_model_output") {
+        return {
+          ...base,
+          kind: "malformed_output",
+          tone: "danger",
+          title: "The model's answer wasn't usable SQL",
+          message: "The model responded, but its output wasn't a SQL query, so nothing was run.",
+          hint: "Rephrase the question and try again.",
+          retryable: true,
+        };
+      }
       return {
         ...base,
         kind: "model_error",
@@ -103,6 +140,35 @@ function fromResponse(r: QueryResponse): Failure {
         hint: "Adding business context about the columns you mean often helps.",
         retryable: true,
         details: code === "sql_error" && r.error ? [r.error.message] : undefined,
+      };
+    case "validation_error": {
+      const what: Record<string, string> = {
+        unknown_table: "a table that doesn't exist in this database",
+        unknown_column: "a column that doesn't exist in this database",
+        ambiguous_column: "a column name that matches more than one table",
+        unknown_function: "a function this database doesn't provide",
+        invalid_syntax: "SQL that isn't valid for this database",
+      };
+      return {
+        ...base,
+        kind: "invalid_for_database",
+        tone: "danger",
+        title: "The SQL doesn't fit this database",
+        message: `The model referred to ${what[code ?? ""] ?? "something that isn't valid here"}. It passed the safety checks, but it was checked against the real schema and never executed.`,
+        hint: "Adding business context that names the right tables or columns often helps.",
+        retryable: true,
+        details: r.error?.detail ? [`Not found or invalid: ${r.error.detail}`] : undefined,
+      };
+    }
+    case "cancelled":
+      return {
+        ...base,
+        kind: "cancelled",
+        tone: "neutral",
+        title: "Request cancelled",
+        message: "This query was cancelled before it finished, and any running work was stopped.",
+        hint: "Run it again whenever you're ready.",
+        retryable: true,
       };
     case "schema_error":
       return {

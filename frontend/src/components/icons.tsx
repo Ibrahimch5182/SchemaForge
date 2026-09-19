@@ -125,6 +125,12 @@ export const Chevron = (p: IconProps) => (
     <path d="m6 9 6 6 6-6" />
   </Icon>
 );
+export const Info = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="8.5" />
+    <path d="M12 11v5M12 7.8v.1" />
+  </Icon>
+);
 export const Terminal = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="4.5" width="18" height="15" rx="2.5" />

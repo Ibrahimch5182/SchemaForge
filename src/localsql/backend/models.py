@@ -6,8 +6,9 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-QueryStatus = Literal["ok", "model_error", "unsafe_sql", "execution_error", "schema_error"]
-Stage = Literal["schema", "model", "safety", "execution"]
+QueryStatus = Literal["ok", "model_error", "unsafe_sql", "validation_error", "execution_error", "schema_error", "cancelled"]
+Stage = Literal["schema", "model", "safety", "preflight", "execution"]
+StageState = Literal["passed", "failed", "not_run"]
 
 
 class QueryRequest(BaseModel):
@@ -63,14 +64,38 @@ class ErrorInfo(BaseModel):
     stage: Stage
     code: str
     message: str
+    #: Short identifier-only hint (e.g. the missing column name). Never a raw engine message.
+    detail: Optional[str] = None
 
 
 class Timings(BaseModel):
     schema_ms: Optional[float] = None
     model_ms: Optional[float] = None
     safety_ms: Optional[float] = None
+    preflight_ms: Optional[float] = None
     execution_ms: Optional[float] = None
     total_ms: float = 0.0
+
+
+class ReliabilityInfo(BaseModel):
+    """What was and was NOT verified about this answer.
+
+    The deterministic stages verify safety, validity for the database and
+    successful execution. None of that establishes that the SQL answers the
+    question, and no calibrated correctness probability exists, so
+    `semantic_correctness` is always "not_verified" and `confidence` is always
+    null. Never invent a score here.
+    """
+
+    safety: StageState = "not_run"
+    preflight: StageState = "not_run"
+    execution: StageState = "not_run"
+    semantic_correctness: Literal["not_verified"] = "not_verified"
+    confidence: None = None
+    note: str = (
+        "Safety, database validation and successful execution do not guarantee the answer is correct. "
+        "No calibrated confidence score is available."
+    )
 
 
 class QueryResponse(BaseModel):
@@ -85,3 +110,4 @@ class QueryResponse(BaseModel):
     model: dict[str, Any] = Field(default_factory=dict)
     prompt_sha256: Optional[str] = None
     dialect: Optional[str] = None
+    reliability: ReliabilityInfo = Field(default_factory=ReliabilityInfo)

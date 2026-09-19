@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { QueryResponse } from "../api/types";
 import { analyzeChartability } from "../lib/chartability";
 import { ChartPanel } from "./ChartPanel";
-import { ChartIcon, Check, Lock, Shield, TableIcon } from "./icons";
+import { ChartIcon, Check, Info, Lock, Shield, TableIcon } from "./icons";
 import { MetaStrip } from "./MetaStrip";
 import { ResultTable } from "./ResultTable";
 import { SqlBlock } from "./SqlBlock";
@@ -22,10 +22,17 @@ export function ResultView({ response }: { response: QueryResponse }) {
       <div className="status-banner is-ok" role="status">
         <Check size={18} />
         <div>
-          <strong>Query completed</strong>
-          <span>Generated locally, passed the safety policy, and ran read-only.</span>
+          <strong>Query executed successfully</strong>
+          <span>Safety verified, checked against the database schema, and run read-only.</span>
         </div>
       </div>
+
+      <p className="trust-note" role="note" aria-label="What is and isn't verified">
+        <Info size={15} />
+        <span>
+          <strong>Verified:</strong> safe, valid for this database, read-only. <strong>Not verified:</strong> that this answers your question. Review the SQL before relying on the result.
+        </span>
+      </p>
 
       {response.generated_sql && (
         <SqlBlock
@@ -33,10 +40,10 @@ export function ResultView({ response }: { response: QueryResponse }) {
           badge={
             <span className="badges">
               <span className="badge badge-ok">
-                <Shield size={13} /> Safety passed
+                <Shield size={13} /> Safety verified
               </span>
               <span className="badge badge-neutral">
-                <Lock size={13} /> Read-only
+                <Lock size={13} /> Read-only execution
               </span>
             </span>
           }
@@ -61,7 +68,7 @@ export function ResultView({ response }: { response: QueryResponse }) {
         </div>
 
         {result.truncated && (
-          <div className="truncation-note" role="note">
+          <div className="truncation-note" role="note" aria-label="Results truncated">
             <strong>Results truncated.</strong> Only the first {result.max_rows.toLocaleString("en-US")} rows are shown; more rows exist. The total isn't known. Add a filter or LIMIT to
             narrow the question.
           </div>

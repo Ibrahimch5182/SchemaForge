@@ -170,3 +170,35 @@ describe("config and routing", () => {
     expect(pathForRoute("workspace")).toBe("/workspace");
   });
 });
+
+describe("classifyOutcome: Phase 10 reliability states", () => {
+  const kind = (r: ReturnType<typeof makeResponse>) => {
+    const c = classifyOutcome({ kind: "response", response: r });
+    return c.ok ? "ok" : c.failure.kind;
+  };
+  it("maps the new stable codes", () => {
+    expect(kind(failureResponse("model_error", "model", "model_busy"))).toBe("model_busy");
+    expect(kind(failureResponse("model_error", "model", "model_timeout"))).toBe("model_timeout");
+    expect(kind(failureResponse("model_error", "model", "malformed_model_output"))).toBe("malformed_output");
+    expect(kind(failureResponse("validation_error", "preflight", "unknown_table"))).toBe("invalid_for_database");
+    expect(kind(failureResponse("cancelled", "model", "cancelled"))).toBe("cancelled");
+  });
+  it("keeps every backend failure code distinguishable from a generic error", () => {
+    const codes: Record<string, [Parameters<typeof failureResponse>[0], Parameters<typeof failureResponse>[1]]> = {
+      model_busy: ["model_error", "model"],
+      model_timeout: ["model_error", "model"],
+      malformed_model_output: ["model_error", "model"],
+      model_not_configured: ["model_error", "model"],
+      timeout: ["execution_error", "execution"],
+      unknown_column: ["validation_error", "preflight"],
+      cancelled: ["cancelled", "model"],
+    };
+    const kinds = Object.entries(codes).map(([code, [status, stage]]) => kind(failureResponse(status, stage, code)));
+    expect(new Set(kinds).size).toBe(kinds.length);
+    expect(kinds).not.toContain("model_error");
+  });
+  it("only invalid-for-database failures expose the identifier hint", () => {
+    const c = classifyOutcome({ kind: "response", response: failureResponse("validation_error", "preflight", "unknown_column", { error: { stage: "preflight", code: "unknown_column", message: "m", detail: "bonus" } }) });
+    expect(!c.ok && c.failure.details).toEqual(["Not found or invalid: bonus"]);
+  });
+});

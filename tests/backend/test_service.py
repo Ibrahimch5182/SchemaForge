@@ -60,7 +60,6 @@ def test_business_context_omitted_when_absent_or_blank(tmp_path):
         "WITH a AS (DELETE FROM employees RETURNING *) SELECT * FROM a",
         "SELECT load_extension('x')",
         "```sql\nSELECT 1\n```",
-        "",
     ],
 )
 def test_unsafe_sql_never_reaches_execution(tmp_path, sql):
@@ -86,7 +85,8 @@ def test_db_cannot_be_mutated_even_if_ast_safety_is_bypassed(tmp_path):
         "CREATE TABLE pwn (a)",
     ]
     for sql in hostile:
-        service, _, spy, registry = make_service(tmp_path, FakeRuntime(sql), safety=AllowAllSafety())
+        # preflight=False: target the executor in isolation (Phase 8 pipeline).
+        service, _, spy, registry = make_service(tmp_path, FakeRuntime(sql), safety=AllowAllSafety(), preflight=False)
         path = registry.resolve("demo").path
         before = file_sha(path)
         resp = service.query(req())
@@ -110,7 +110,7 @@ def test_model_failures_are_structured(tmp_path):
 
 
 def test_execution_error_is_structured(tmp_path):
-    service, _, spy, _ = make_service(tmp_path, FakeRuntime("SELECT missing_col FROM employees"))
+    service, _, spy, _ = make_service(tmp_path, FakeRuntime("SELECT missing_col FROM employees"), preflight=False)
     resp = service.query(req())
     assert resp.status == "execution_error" and resp.error.stage == "execution" and resp.error.code == "sql_error"
     assert resp.safety.allowed and resp.generated_sql == "SELECT missing_col FROM employees"

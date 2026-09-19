@@ -26,6 +26,13 @@ interface RawResponse {
   requestId: string | null;
 }
 
+/** 32 hex chars: matches the backend's accepted request-id shape. */
+export function newRequestId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID().replace(/-/g, "");
+  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+}
+
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === "AbortError";
 
 export class SchemaForgeClient implements SchemaForgeApi {
@@ -54,17 +61,35 @@ export class SchemaForgeClient implements SchemaForgeApi {
   }
 
   async query(request: QueryRequest, signal?: AbortSignal): Promise<QueryResponse> {
-    const res = await this.send(
-      "/query",
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) },
-      this.queryTimeoutMs,
-      signal,
-    );
+    // Client-chosen request id: lets us tell the backend to stop the work if we give up.
+    const requestId = newRequestId();
+    let res: RawResponse;
+    try {
+      res = await this.send(
+        "/query",
+        { method: "POST", headers: { "Content-Type": "application/json", "X-Request-ID": requestId }, body: JSON.stringify(request) },
+        this.queryTimeoutMs,
+        signal,
+      );
+    } catch (e) {
+      // User cancel or client timeout: don't leave an expensive model process running for nobody.
+      if (e instanceof ApiError && (e.kind === "aborted" || e.kind === "timeout")) this.cancelInBackground(requestId);
+      throw e;
+    }
     // Pipeline outcomes (unsafe_sql, model_error, timeout, ...) arrive as a full
     // QueryResponse body with a non-2xx status: that is a *result*, not a transport error.
     if (looksLikeQueryResponse(res.json)) return parseQueryResponse(res.json);
     if (!res.ok) throw this.httpError(res);
     return parseQueryResponse(res.json); // 2xx that is not a QueryResponse -> malformed
+  }
+
+  /** Best-effort, fire-and-forget: the backend's cancel endpoint is idempotent and harmless for unknown ids. */
+  private cancelInBackground(requestId: string): void {
+    try {
+      void this.fetchImpl(`${this.baseUrl}/query/${requestId}/cancel`, { method: "POST", keepalive: true }).catch(() => undefined);
+    } catch {
+      /* ignore */
+    }
   }
 
   private httpError(res: RawResponse): ApiError {
