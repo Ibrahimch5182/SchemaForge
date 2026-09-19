@@ -1,0 +1,53 @@
+# SchemaForge Phase 7 (quantization + local inference) constants.
+# Read by localsql.deploy.config (pydantic + pyyaml only). Nothing here
+# changes model, checkpoint, or Phase 1-6 results.
+
+model:
+  id: Qwen/Qwen3-4B-Instruct-2507
+  # Exact base revision used for training and every Phase 3-6 evaluation.
+  revision: cdbee75f17c01a7cc42f958dc650907174af0554
+
+adapter:
+  checkpoint: checkpoint-1518
+  default_dir: .artifacts/phase7/adapter-1518/phase5c-final-1518-safety/adapter
+  weights_sha256: f7b78b3cb012219bdc9ef48ee2cf5a9105a9d395033da4f9c8a1af2f10ff34cc
+  expected_r: 16
+  expected_lora_alpha: 32
+
+deployment:
+  # PRIMARY: base GGUF (F16 or Q4_K_M) + runtime `--lora LORA.gguf`. The LoRA
+  # stays a small separate artifact. A merged GGUF (llama-export-lora) is
+  # OPTIONAL packaging: not required for Phase 7 PASS, never the default.
+  mode: hot_lora
+  merged_export_optional: true
+
+quantization:
+  # Deployment-time GGUF quantization. Distinct from the training-time
+  # bitsandbytes NF4 used for QLoRA.
+  intermediate_outtype: f16
+  target: Q4_K_M
+
+paths:
+  root: .artifacts/phase7
+  subdirs: [adapter-1518, base-gguf, lora-gguf, merged-gguf, q4_k_m, benchmarks, manifests]
+
+inference:
+  # Greedy decoding, mirroring configs/model.yaml (do_sample=false, seed=42,
+  # max_new_tokens=512). Context must fit the longest sampled prompt + output.
+  context_size: 8192
+  max_new_tokens: 512
+  seed: 42
+  n_gpu_layers: 0            # CPU inference is valid; GPU offload is optional
+  timeout_seconds: 900
+  prompt_manifest: data/benchmarks/bird_mini_dev/generation/manifest.jsonl
+
+quality_sanity:
+  # Quantization regression check on a small fixed gold-free prompt subset.
+  # NOT an accuracy benchmark; BIRD Mini-Dev is not re-run in Phase 7.
+  sample_size: 10
+  selection_salt: schemaforge-phase7-quant-sanity-v1
+
+benchmark:
+  num_prompts: 5
+  warmup_runs: 1
+  measured_repeats: 3

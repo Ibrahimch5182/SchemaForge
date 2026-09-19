@@ -180,6 +180,8 @@ uv run pytest -q
   formatting, completion-only masking, token profiling, cloud workflow.
 - `docs/CONTEXT_BUDGET.md` -- Phase 5A: schema-context analysis, compact
   serialization, deterministic budgeter, open decisions (not final).
+- `docs/PHASE7.md` -- Phase 7: llama.cpp GGUF quantization + local inference
+  tooling (`configs/phase7.yaml`, `localsql.deploy`); conversion not yet run.
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.

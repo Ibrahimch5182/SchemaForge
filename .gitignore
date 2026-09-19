@@ -101,3 +101,8 @@ Thumbs.db
 .ruff_cache/
 build/
 dist/
+
+# Phase 7: quantization/local-inference artifacts (adapter copy, GGUFs,
+# manifests, benchmark outputs -- reproducible via scripts/prepare_phase7.py
+# and scripts/convert_phase7.py; never committed)
+.artifacts/
