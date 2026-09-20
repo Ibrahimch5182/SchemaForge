@@ -94,7 +94,7 @@ Cooperative and thread-based (the sync pipeline runs in a worker thread; no asyn
   present and a database is registered; otherwise `503` with `reasons`
   (`model_not_configured`, `model_artifacts_missing`, `no_databases_registered`). Never runs
   inference.
-- The frontend status pill shows *Local model ready*, *Model busy/saturated*, *Model files
+- The frontend status pill shows *<host> model server ready* (e.g. *AWS EC2 model server ready*; Phase 11 wording), *Model busy/saturated*, *Model files
   missing*, *Model not configured* or *Backend offline*, and blocks **Run** when files are
   missing.
 

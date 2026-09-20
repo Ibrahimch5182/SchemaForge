@@ -1699,7 +1699,7 @@ the shared `generate_one_example()` (no second implementation);
 is proven to differ between a baseline-shaped and an adapter-shaped
 `RunConfig`. Full suite: 318 tests, all green, no regressions.
 
-**Real BIRD Mini-Dev fine-tuned result: NOT YET RUN.** The Phase 3
+**[Historical -- as of the end of Phase 5D; superseded by Phase 6 below] Real BIRD Mini-Dev fine-tuned result: NOT YET RUN.** The Phase 3
 baseline (untouched, still the only real number on record) remains
 **official EX 43.6%, Soft-F1 47.6975%** (500/500 generated, 0 failures).
 Do NOT claim improvement -- or any result at all -- for checkpoint-1518
@@ -1713,3 +1713,28 @@ hardware against the full 500-example manifest with
 `checkpoint-1518` with `--context-mode with_business_context` over the
 full 500-example Mini-Dev manifest, then score with
 `scripts/evaluate_bird_minidev.py` -- this is the final Phase 5 gate.
+
+## Phases 6-12 -- Summary Addendum (added at Phase 12)
+
+The detailed per-phase write-ups for Phases 6-11 live in their own documents rather than in
+this journal; this addendum closes the gap so the journal is not left stating that the
+fine-tuned result is "not yet run".
+
+- **Phase 6 -- held-out and external evaluation (frozen results).** Base vs `checkpoint-1518`:
+  seen-training normalized SQL exact match 4.20% -> 37.40% (+33.20 pp, n=500; specialization,
+  not generalization); schema-held-out execution accuracy 39.14% -> 44.57% (+5.43 pp, n=534,
+  7 unseen DBs, SchemaForge SQLite comparator, NOT the official evaluator); untouched BIRD
+  Mini-Dev EX 43.6% -> 44.8% (+1.2 pp, n=500, official evaluator), Soft-F1 47.6975 -> 47.1816
+  (no improvement), parse success 0.942 -> 0.984, execution success 0.82 -> 0.87. Full tables,
+  paired counts and caveats: `docs/RESULTS.md`. Raw run outputs are local uncommitted archives.
+- **Phase 7** quantization/local inference: `docs/PHASE7.md`. **Phase 8** backend:
+  `docs/PHASE8.md`. **Phase 9** frontend: `docs/PHASE9.md`. **Phase 10** reliability:
+  `docs/PHASE10.md`. **Phase 11** persistent serving + real AWS/Vercel proof:
+  `docs/PHASE11.md`, `docs/evidence/phase11-production-proof.md`.
+- **Phase 12 -- final release and portfolio certification** (documentation, repository audit,
+  final checks; no retraining, re-evaluation, model or methodology change): `README.md`,
+  `docs/RESULTS.md`, `docs/ARCHITECTURE.md`, `docs/LIMITATIONS.md`, `docs/QUICKSTART.md`,
+  `docs/FINAL_CERTIFICATION.md`, `docs/PORTFOLIO.md`. Final checks: backend 675 passed / 1
+  skipped; frontend typecheck, lint and build clean; frontend tests 114/115 with the one
+  failure being the accepted landing benchmark-display assertion (a presentation change, not
+  scientific evidence).

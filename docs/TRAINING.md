@@ -1,14 +1,50 @@
-# LocalSQL Training: QLoRA Smoke Test (Phase 4) + Certification/Resume (Phase 5B)
+# LocalSQL Training: QLoRA Setup, Smoke Test (Phase 4), Certification and Final Run (Phase 5)
 
-Phase 4 proves the QLoRA training path works correctly end to end -- on a
-small subset and/or a bounded number of optimizer steps -- before any real,
-full-length fine-tuning run is attempted. **This is a smoke test, not the
-fine-tuning experiment.** No full training happens in this phase, and BIRD
-Mini-Dev is never touched here. `scripts/run_qlora_smoke.py` was later
-extended (Phase 5B, still no full training) with checkpointing and
-explicit resume support -- see "Checkpointing and resume" below.
+This document is the authoritative training reference. It covers the QLoRA setup, the Phase 4
+smoke test, Phase 5B certification/resume infrastructure, and the final canonical run
+(checkpoint-1518). Measured accuracy results live in [`RESULTS.md`](RESULTS.md), not here.
 
-## Result (Kaggle, real run) -- COMPLETE
+## Final training at a glance
+
+| Item | Value |
+|---|---|
+| Base model | `Qwen/Qwen3-4B-Instruct-2507`, revision `cdbee75f17c01a7cc42f958dc650907174af0554` (unmodified weights; LoRA adapter only) |
+| Training quantization | 4-bit **NF4**, double quantization, FP16 compute (QLoRA) |
+| LoRA | rank 16, alpha 32, dropout 0.05, all 7 projections (`q/k/v/o` + `gate/up/down`) |
+| Optimization | batch 1, gradient accumulation 8 (effective 8), LR 1e-4, warmup 5%, `paged_adamw_8bit`, gradient checkpointing, seed 42 |
+| Schedule | 2 epochs = 759 optimizer steps/epoch x 2 = **1,518** steps over 6,067 examples |
+| Objective | **Completion-only loss**: prompt tokens labelled -100, only gold-SQL tokens trained (explicit, unit-tested in `localsql.train.sft_data`) |
+| Context length | `max_seq_length=4096`, approved for the compacted candidate dataset only; zero examples truncated, gold SQL never truncated |
+| Data | `birdsql/bird23-train-filtered`, split by `db_id`; Phase 5 candidate dataset with adaptive per-database schema compaction ([`CONTEXT_BUDGET.md`](CONTEXT_BUDGET.md)); training file SHA-256 `e23a97ea746cef24b17f6bea8dc8440ab96313798837033ec76af9ca79830196` |
+| Checkpoint selection | **Final checkpoint of the fixed 2-epoch schedule** (`checkpoint-1518`); the documented methodology has no score-based checkpoint-selection step, and Mini-Dev was never used to pick it |
+| Adapter identity | `adapter_model.safetensors` SHA-256 `f7b78b3cb012219bdc9ef48ee2cf5a9105a9d395033da4f9c8a1af2f10ff34cc` |
+| Hardware | Kaggle GPU (T4-class), run across resumable sessions; the resume design keeps a multi-session run equivalent to one uninterrupted 2-epoch run |
+
+Training-time **NF4** (used for training and for all Phase 3-6 evaluation) is distinct from
+deployment-time **Q4_K_M** GGUF quantization (Phase 7, [`PHASE7.md`](PHASE7.md)): the deployed
+base is numerically different from the model that was evaluated, and no accuracy claim is made
+for the quantized model.
+
+Deployment artifacts derived from this adapter: F16 LoRA GGUF SHA-256
+`53ee2c6dd036ebcccdf0c71bf682c961244ca4665e0cc53bd809ac98b944ba48`, Q4_K_M base SHA-256
+`3df3d5bfa7290f20e8b0ad2b9bae78aa06fb198b97837e4ebc28b5867851c848` (never committed to Git).
+
+## Reproducibility boundaries
+
+Reproducible from this repository: data preparation and DB-level splits (deterministic, seeded),
+the Phase 5 candidate dataset (`scripts/build_phase5_candidate.py`), SFT formatting and
+completion-only masking, the training/resume/export tooling, the evaluation runners and the
+official-evaluator adapter, GGUF conversion and manifests, and the whole serving stack.
+
+Not bit-for-bit reproducible, by nature: the GPU training run itself (CUDA/bitsandbytes
+non-determinism, session boundaries and library versions on Kaggle), so re-training yields a
+statistically similar but not byte-identical adapter. The frozen adapter and GGUF files are
+therefore identified by SHA-256 rather than by "re-run to get it". The raw Kaggle outputs and
+model weights are **not** committed to Git; the evidence directories committed here
+(`kaggle-phase3-export/`, `kaggle-phase4-evidence/`, `kaggle-phase5-tokenizer-evidence/`) are the
+subset that was checked in. The narrative journal for every step is [`../PROJECT.md`](../PROJECT.md).
+
+## Phase 4 smoke-test result (Kaggle, real run) -- COMPLETE
 
 **20/20 optimizer steps completed, all losses/grad norms finite, final
 train_loss 0.4100, peak GPU memory 11,550.2 MB on a Tesla T4.** Resolved

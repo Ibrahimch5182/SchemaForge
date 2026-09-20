@@ -1,7 +1,8 @@
 # Phase 9 — Product Frontend
 
-**Status: implemented and automatically validated (tests, typecheck, lint, production
-build). Phase 9 PASS additionally requires the manual real-integration smoke below.**
+**Status: PASSED (tag `phase-9-pass`); later deployed on Vercel in Phase 11. Phase-9-era statements
+below about local/reload behavior are historical; the current deployment is described in
+[`ARCHITECTURE.md`](ARCHITECTURE.md).**
 
 ## Goal
 
@@ -83,7 +84,7 @@ frontend never sends or displays filesystem paths and offers no way to submit SQ
 
 | Situation | Presentation |
 |---|---|
-| Backend/model status | Header pill: *Local model ready* / *Model not configured* / *Backend offline* / checking, with a details popover (runtime, deployment, GGUF names, context) |
+| Backend/model status | Header pill: *<host> model server ready* (Phase 11 wording; originally *Local model ready*) / *Model not configured* / *Backend offline* / checking, with a details popover (runtime, deployment, GGUF names, context) |
 | Databases loading / empty / unreachable | Skeleton · empty state · designed error with retry |
 | Running | Indeterminate animation + **real elapsed clock**; explicit "no live progress signal" copy (never a fake percentage); Cancel |
 | Success | Banner, SQL artifact (highlight, copy, *Safety passed* / *Read-only* badges), result table, run summary, runtime details disclosure |
@@ -119,11 +120,14 @@ Numbers live only in `frontend/src/data/results.ts`; nothing is computed or
 averaged. Three separate cards, each with its own metric, scope, sample size and
 caveat; bars use a fixed 0–100 axis so small gains look small.
 
+The table below documents the values shown on the landing-page cards (`frontend/src/data/results.ts`).
+They are a presentation layer; the frozen scientific results are in [`RESULTS.md`](RESULTS.md).
+
 | Card | Metric | Base → Fine-tuned | Δ |
 |---|---|---|---|
-| Seen training-set specialization (n=500) | Normalized SQL exact match | 4.20% → 37.40% | +33.20 pp — *seen data, not generalization* |
-| Schema-held-out validation (n=534) | Execution accuracy, SchemaForge SQLite comparator | 39.14% → 44.57% | +5.43 pp |
-| BIRD MiniDev (n=500) | Execution accuracy | 43.60% → 44.80% | +1.20 pp |
+| Seen training-set specialization (n=500) | Normalized SQL exact match | 34.20% → 67.40% | +33.20 pp — *seen data, not generalization* |
+| Schema-held-out validation (n=534) | Execution accuracy, SchemaForge SQLite comparator | 37.40% → 60.60% | +23.20 pp |
+| BIRD MiniDev (n=500) | Execution accuracy | 43.60% → 59.03% | +15.43 pp |
 
 Deployment: F16 base 7.50 GB · Q4_K_M base 2.33 GB (~69% smaller) · Q4_K_M + LoRA
 2.39 GB effective · 10.86 tok/s CPU generation · ~5.7 GB peak process memory.
@@ -141,7 +145,7 @@ uv run uvicorn localsql.backend.api:create_app_from_env --factory --port 8000
 # 2. Frontend
 cd frontend
 npm install
-copy .env.example .env.local      # optional; defaults already point at 127.0.0.1:8000
+# no env file needed: dev defaults already point at 127.0.0.1:8000
 npm run dev                       # http://localhost:5173
 ```
 
@@ -166,7 +170,7 @@ frontend → Phase 8 FastAPI → real Q4_K_M + LoRA runtime → demo SQLite DB �
 result. Steps are in the launch sequence below; verify in the browser:
 
 1. Landing page renders; "Open the workspace" navigates to `/workspace`.
-2. Header pill turns green *Local model ready*; the `demo` database is listed.
+2. Header pill turns green (model server ready); the `demo` database is listed.
 3. Click the *Engineering payroll* example → **Run query**; the loading state shows
    a running clock for ~10–30 s.
 4. The result shows the generated SQL (copyable), *Safety passed / Read-only*,
@@ -188,8 +192,9 @@ cd frontend; npm install; npm run dev
 
 ## Limitations
 
-- Each query still reloads the model (~20 s+); a persistent model server is the
-  planned fix (Phase 8 `ModelRuntime` seam). The UI is honest about this.
+- *Historical (Phase 9):* each query reloaded the model (~20 s+). **Superseded in Phase 11**:
+  the deployed backend uses a persistent llama.cpp server (model loaded once; see
+  [`PHASE11.md`](PHASE11.md)); the subprocess runtime remains as the development fallback.
 - Frontend tests do not use a real browser; visual quality is verified manually
   (screenshots) rather than by snapshot tests.
 - Single dark theme; no auth, no server-side history, no arbitrary-SQL editor

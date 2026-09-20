@@ -12,35 +12,21 @@ executable read-only SQL query. Target model: `Qwen/Qwen3-4B-Instruct-2507`
 
 ## Current phase
 
-**Phase 5B IN PROGRESS: GPU certification, throughput benchmark, and
-crash-safe resume infrastructure built; real Kaggle GPU certification
-NOT yet run.** Phases 1-4 are complete (Phase 4: real Kaggle QLoRA smoke
-test, 20/20 steps, adapter saved + reload-verified). **Selected candidate
-policy**: adaptive per-database full-schema compaction
-(`localsql.schema_context.db_policy`, `scripts/build_phase5_candidate.py`)
--- 9/62 train DBs (1,502/6,067 examples, real-Kaggle-data-derived) and
-2/7 validation DBs (173/534, local-estimate-derived) get the compact
-serializer; everything else is byte-identical to Phase 1. The
-question-conditioned schema budgeter (98.17% gold retention, not 100%)
-was evaluated and explicitly NOT selected -- it remains in the repo as
-documented research tooling only. **Candidate `max_seq_length=4096` is
-now APPROVED** -- real-tokenizer Kaggle profiling of the full 6,067-train/
-534-validation candidate dataset (tokenizer revision
-`cdbee75f17c01a7cc42f958dc650907174af0554`) confirmed zero examples over
-4096 tokens and zero prefix-boundary mismatches. **Still outstanding
-before any full training run**: (B) worst-case longest-16-example T4
-memory certification, (C) representative-64-example throughput benchmark,
-(D) stop/resume certification -- all built (`scripts/run_qlora_smoke.py`
-checkpointing, `scripts/export_checkpoint.py`) but not yet executed on
-real Kaggle GPU hardware. See `PROJECT.md` (Phase 5B) for exact commands
-and gate status before treating any of B-D as passed. A prior version of
-this document's token counts contained an uncorrected local-estimate
-number (1,626) presented ambiguously next to real numbers; the real
-Phase 4 figure is 1,398 -- see `PROJECT.md` for the full correction. No
-full training run and no application code exist yet. See `PROJECT.md` for
-the full chronological
-engineering journal. Do not implement later phases unless explicitly
-asked.
+**Phase 12 (final release and portfolio certification) is the last phase; the project is
+functionally complete (Phases 1-11 passed).** Phase 12 is documentation/repository
+certification only -- no retraining, no re-evaluation, no methodology or frozen-artifact
+changes. Frozen scientific results (see `docs/RESULTS.md`, the single authoritative source):
+seen-training normalized exact match 4.20 -> 37.40% (specialization, NOT generalization);
+schema-held-out execution accuracy 39.14 -> 44.57% (n=534, SchemaForge comparator, not the
+official evaluator); external BIRD Mini-Dev EX 43.6 -> 44.8% (+1.2 pp, modest; Soft-F1
+47.6975 -> 47.1816, no improvement). Final adapter `checkpoint-1518` (SHA-256
+`f7b78b3cb012219bdc9ef48ee2cf5a9105a9d395033da4f9c8a1af2f10ff34cc`), base revision
+`cdbee75f17c01a7cc42f958dc650907174af0554`. Training used 4-bit NF4 QLoRA; deployment uses
+Q4_K_M + hot LoRA GGUF, which was never re-scored. The frontend landing page's benchmark cards
+are an accepted presentation exception and must never be cited as scientific evidence. Public
+name is SchemaForge; `localsql` is the legacy package name (do not rename paths). Phase 4/5
+detail (certification gates, compaction policy) is in the invariants below, `docs/TRAINING.md`
+and `PROJECT.md`.
 
 **Phase 11 (persistent serving / deployment) is COMPLETE: both the local
 implementation gate and the real remote production gate PASSED** (2026-09-19,
@@ -63,9 +49,9 @@ shared/SMT host). `.artifacts/` (raw evidence, models) stays git-ignored.
 ## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`, `docs/CONTEXT_BUDGET.md`)
 
 ```
-BIRD --> prepare --> baseline --> QLoRA --> evaluate --> quantize   (future)
+BIRD --> prepare --> baseline --> QLoRA --> evaluate --> quantize   (complete)
 User question --> schema introspection --> fine-tuned model
-  --> SQL safety validation --> read-only execution --> result       (future)
+  --> SQL safety validation --> preflight --> read-only execution --> result   (complete, deployed)
 ```
 
 ## Important invariants
@@ -222,8 +208,10 @@ uv run pytest -q
   networking (CORS/rate limit), AWS zero-cost runbook, Vercel, serving canary
   (`scripts/canary_phase11.py`); remote gate passed;
   evidence in `docs/evidence/phase11-production-proof.md`.
-- `docs/ARCHITECTURE.md` -- full future architecture (app/production not
-  yet built).
+- `docs/RESULTS.md` -- authoritative final results (three separate evaluations).
+- `docs/ARCHITECTURE.md` -- the finished system (offline + online).
+- `docs/LIMITATIONS.md`, `docs/QUICKSTART.md`, `docs/FINAL_CERTIFICATION.md`,
+  `docs/PORTFOLIO.md` -- Phase 12 release documents.
 - `configs/data.yaml` -- Phase 1 pipeline constants.
 - `configs/benchmark.yaml` -- Phase 2 benchmark constants (source revisions,
   expected counts, metric config).

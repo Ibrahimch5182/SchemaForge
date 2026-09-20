@@ -1,14 +1,16 @@
 # LocalSQL Training Context Policy (Phase 5A/5B)
 
-**Status: Phase 5B IN PROGRESS.** This document records the Phase 5A
-analysis and candidate preprocessing policy. As of Phase 5B,
+**Status: FINAL (historical analysis).** The adaptive per-database compaction policy
+recorded here is the one used for the final training run (checkpoint-1518; see
+[`TRAINING.md`](TRAINING.md) and [`RESULTS.md`](RESULTS.md)). The remainder of this status
+paragraph is the Phase 5B snapshot, kept for the record: as of Phase 5B,
 `max_seq_length=4096` for the candidate (compacted) dataset is
 **real-tokenizer-confirmed** (zero over-4096 examples across all 6,067
 train / 534 validation candidate examples, tokenizer revision
 `cdbee75f17c01a7cc42f958dc650907174af0554`) -- see `PROJECT.md` (Phase
-5B) for the exact numbers and for the still-outstanding GPU memory/
-throughput/resume certification gates. No full training has occurred.
-BIRD Mini-Dev generation/evaluation is untouched.
+5B) for the exact numbers and for the then-outstanding GPU memory/
+throughput/resume certification gates (since completed; canonical training finished at
+step 1518). BIRD Mini-Dev was never used as training data.
 
 ## Correction
 
