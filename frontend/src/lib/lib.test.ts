@@ -202,3 +202,15 @@ describe("classifyOutcome: Phase 10 reliability states", () => {
     expect(!c.ok && c.failure.details).toEqual(["Not found or invalid: bonus"]);
   });
 });
+
+describe("serving labels (Phase 11)", () => {
+  it("names the persistent server and CPU/GPU offload only from reported data", async () => {
+    const { runtimeLabel, inferenceLabel } = await import("./modelMeta");
+    expect(runtimeLabel("llama_server", "persistent_server")).toBe("llama.cpp · persistent server");
+    expect(runtimeLabel("llama_cpp")).toBe("llama.cpp · per-request process");
+    expect(runtimeLabel(null)).toBe("—");
+    expect(inferenceLabel(0)).toBe("CPU");
+    expect(inferenceLabel(33)).toMatch(/GPU offload/);
+    expect(inferenceLabel(null)).toBeNull();
+  });
+});

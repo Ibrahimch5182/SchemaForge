@@ -1,4 +1,5 @@
 import { BENCHMARKS, DEPLOYMENT, type Benchmark } from "../data/results";
+import { SERVING, SERVING_PATH } from "../data/serving";
 import { ForgeDemo } from "../components/ForgeDemo";
 import { Alert, ArrowRight, Cpu, Database, Layers, Lock, Shield, ShieldOff, Sparkle } from "../components/icons";
 import { LogoMark } from "../components/Logo";
@@ -35,7 +36,7 @@ function Hero({ navigate }: { navigate: (r: Route) => void }) {
       <div className="container hero-grid">
         <div className="hero-copy">
           <p className="eyebrow">
-            <Sparkle size={14} /> Fine-tuned · Quantized · Runs on your machine
+            <Sparkle size={14} /> Fine-tuned · Quantized · Deployed on AWS EC2
           </p>
           <h1 id="hero-title">
             Plain English in.
@@ -43,9 +44,16 @@ function Hero({ navigate }: { navigate: (r: Route) => void }) {
             <span className="molten">Guarded SQL</span> out.
           </h1>
           <p className="lede">
-            SchemaForge is a specialized Text-to-SQL model: fine-tuned, evaluated, and quantized to run entirely on your own hardware, with deterministic safety standing between the
-            model and your data.
+            An open-weight Qwen3-4B, QLoRA-specialized and quantized to GGUF Q4_K_M, served by persistent llama.cpp inference on AWS EC2 through FastAPI over HTTPS, with
+            deterministic safety standing between the model and your data.
           </p>
+          <ol className="serving-path" aria-label="Request path: Vercel frontend to AWS EC2 model server">
+            {SERVING_PATH.map((n) => (
+              <li key={n} className={n === "HTTPS" ? "is-link" : n === "AWS EC2" || n === "llama.cpp" ? "is-aws" : ""}>
+                {n}
+              </li>
+            ))}
+          </ol>
           <div className="hero-cta">
             <RouteLink to="workspace" navigate={navigate} className="btn btn-primary btn-lg">
               Open the workspace <ArrowRight size={18} />
@@ -61,11 +69,11 @@ function Hero({ navigate }: { navigate: (r: Route) => void }) {
             </li>
             <li>
               <strong>~2.39 GB</strong>
-              <span>deployed (Q4_K_M + LoRA)</span>
+              <span>served (Q4_K_M + LoRA)</span>
             </li>
             <li>
-              <strong>{DEPLOYMENT.cpuTokensPerSecond} tok/s</strong>
-              <span>on CPU, no GPU needed</span>
+              <strong>AWS EC2</strong>
+              <span>persistent llama.cpp, CPU inference</span>
             </li>
           </ul>
         </div>
@@ -77,8 +85,8 @@ function Hero({ navigate }: { navigate: (r: Route) => void }) {
 
 /* ------------------------------------------------------------ pipeline */
 const STEPS = [
-  { icon: Database, title: "Schema in", body: "Your registered SQLite database is introspected into the same canonical prompt the model was trained on." },
-  { icon: Cpu, title: "Model writes SQL", body: "Fine-tuned Qwen3-4B with a runtime LoRA, quantized to Q4_K_M, decoding greedily on CPU." },
+  { icon: Database, title: "Schema in", body: "The registered SQLite database is introspected on the backend into the same canonical prompt the model was trained on." },
+  { icon: Cpu, title: "Model writes SQL", body: "Fine-tuned Qwen3-4B + LoRA, quantized to Q4_K_M, decoded greedily by a persistent llama.cpp server on AWS EC2 (CPU)." },
   { icon: Shield, title: "Safety policy", body: "The SQL is parsed. One read-only statement passes; anything else is blocked before it touches data." },
   { icon: Lock, title: "Read-only run", body: "An independent read-only connection executes it with a time limit and a row cap." },
 ];
@@ -200,9 +208,10 @@ function DeploymentSection() {
         <SectionHead
           eyebrow="Deployment engineering"
           id="deploy-title"
-          title="From 7.5 GB to a laptop-sized model."
-          lede="The base model is quantized to Q4_K_M for llama.cpp. The fine-tune stays a small separate LoRA, loaded at runtime."
+          title="Served on our own AWS EC2 infrastructure."
+          lede="Not a hosted LLM API: the open-weight model is quantized to Q4_K_M and served by a persistent llama.cpp process on AWS EC2. The fine-tune stays a small separate LoRA, loaded at runtime."
         />
+        <ServingArchitecture />
         <div className={`deploy-grid ${seen ? "in-view" : ""}`} ref={ref}>
           <div className="deploy-sizes panel-lg" role="group" aria-label="Model size comparison">
             <h3>On-disk size</h3>
@@ -227,7 +236,7 @@ function DeploymentSection() {
             </li>
             <li>
               <span className="stat-n">{DEPLOYMENT.cpuTokensPerSecond}</span>
-              <span className="stat-l">tokens/sec generation, CPU-only</span>
+              <span className="stat-l">tokens/sec CPU generation (local benchmark)</span>
             </li>
             <li>
               <span className="stat-n">~{DEPLOYMENT.effectiveGb.toFixed(2)} GB</span>
@@ -249,6 +258,51 @@ function DeploymentSection() {
         </aside>
       </div>
     </section>
+  );
+}
+
+/* --------------------------------------------------- serving architecture */
+const SPECS: { k: string; v: string }[] = [
+  { k: "Frontend", v: SERVING.frontend },
+  { k: "Model serving", v: SERVING.host },
+  { k: "Runtime", v: `${SERVING.serving} ${SERVING.runtime}` },
+  { k: "Model", v: `${SERVING.model} · ${SERVING.quantization}` },
+  { k: "Inference", v: SERVING.inference },
+  { k: "API", v: SERVING.api },
+];
+
+function ServingArchitecture() {
+  return (
+    <div className="serve-map" role="group" aria-label="Where each part runs">
+      <div className="serve-col serve-vercel">
+        <span className="serve-tag">Serves the web app</span>
+        <h3>{SERVING.frontend}</h3>
+        <p>Static React frontend. It never sees the model, the weights, or the database.</p>
+      </div>
+      <div className="serve-link" aria-hidden="true">
+        <span>HTTPS</span>
+      </div>
+      <div className="serve-col serve-aws">
+        <span className="serve-tag">Serves the backend and the model</span>
+        <h3>{SERVING.host}</h3>
+        <ul className="serve-stack">
+          <li>Caddy · TLS reverse proxy</li>
+          <li>FastAPI · safety, preflight, read-only execution</li>
+          <li className="is-model">
+            Persistent llama.cpp server <em>private network</em>
+          </li>
+          <li className="is-model">Qwen3-4B · Q4_K_M base + LoRA · CPU inference</li>
+        </ul>
+      </div>
+      <dl className="serve-specs" aria-label="Deployment summary">
+        {SPECS.map((s) => (
+          <div key={s.k}>
+            <dt>{s.k}</dt>
+            <dd>{s.v}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
@@ -309,8 +363,8 @@ function FinalCta({ navigate }: { navigate: (r: Route) => void }) {
   return (
     <section className="section final-cta" aria-labelledby="cta-title">
       <div className="container cta-card">
-        <h2 id="cta-title">See it run on your own machine.</h2>
-        <p>Start the local backend, open the workspace, and ask your demo database a question.</p>
+        <h2 id="cta-title">Ask the model running on AWS.</h2>
+        <p>Open the workspace: your question goes over HTTPS to the AWS EC2 model server, and the generated SQL runs read-only against the demo database.</p>
         <RouteLink to="workspace" navigate={navigate} className="btn btn-primary btn-lg">
           Open the workspace <ArrowRight size={18} />
         </RouteLink>
@@ -326,7 +380,7 @@ function Footer() {
         <span className="footer-brand">
           <LogoMark size={22} /> SchemaForge
         </span>
-        <p>Qwen3-4B-Instruct-2507 · QLoRA fine-tune · llama.cpp Q4_K_M + runtime LoRA · evaluated on BIRD</p>
+        <p>Qwen3-4B-Instruct-2507 · QLoRA fine-tune · llama.cpp Q4_K_M + runtime LoRA · AWS EC2 · Vercel frontend · evaluated on BIRD</p>
       </div>
     </footer>
   );

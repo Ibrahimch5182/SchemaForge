@@ -14,7 +14,7 @@ describe("Landing", () => {
     const navigate = vi.fn();
     render(<Landing navigate={navigate} />);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/plain english in/i);
-    expect(screen.getByText(/entirely on your own hardware/i, { exact: false })).toBeInTheDocument();
+    expect(screen.getByText(/persistent llama\.cpp inference on AWS EC2/i, { exact: false })).toBeInTheDocument();
     const cta = screen.getAllByRole("link", { name: /open the workspace/i })[0]!;
     expect(cta).toHaveAttribute("href", "/workspace");
     await userEvent.click(cta);
@@ -74,5 +74,16 @@ describe("Landing", () => {
     const safety = document.getElementById("safety")!;
     expect(safety).toHaveTextContent(/AST safety policy/i);
     expect(safety).toHaveTextContent(/independent read-only executor/i);
+  });
+
+  it("makes the AWS EC2 model-serving architecture explicit", () => {
+    render(<Landing navigate={vi.fn()} />);
+    const map = screen.getByRole("group", { name: /where each part runs/i });
+    expect(map).toHaveTextContent(/Vercel/);
+    expect(map).toHaveTextContent(/AWS EC2/);
+    expect(map).toHaveTextContent(/persistent llama\.cpp server/i);
+    expect(map).toHaveTextContent(/Q4_K_M/);
+    expect(map).toHaveTextContent(/CPU inference/);
+    expect(screen.getByRole("list", { name: /request path/i })).toHaveTextContent(/Vercel.*HTTPS.*AWS EC2.*FastAPI.*llama\.cpp/);
   });
 });

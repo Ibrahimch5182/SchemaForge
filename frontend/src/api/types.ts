@@ -17,6 +17,11 @@ export interface ModelRuntimeInfo {
   runtime: string;
   configured: boolean;
   deployment_mode?: string;
+  /** `persistent_server` (llama.cpp HTTP server) or absent for the per-request subprocess runtime. */
+  runtime_mode?: string;
+  /** Persistent-server state from the backend: ready / busy / saturated / loading / unreachable. */
+  serving?: { state: string };
+  parallel_slots?: number;
   base_gguf?: string | null;
   lora_gguf?: string | null;
   context_size?: number;

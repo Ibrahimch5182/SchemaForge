@@ -17,7 +17,7 @@ async function run(api = makeApi()) {
 
 describe("Reliability states are distinct and honest", () => {
   const cases: [string, QueryResponse, RegExp, string, RegExp?][] = [
-    ["model busy", failureResponse("model_error", "model", "model_busy"), /local model is busy/i, "model_busy"],
+    ["model busy", failureResponse("model_error", "model", "model_busy"), /model server is busy/i, "model_busy"],
     ["model timeout", failureResponse("model_error", "model", "model_timeout"), /model took too long/i, "model_timeout"],
     ["malformed output", failureResponse("model_error", "model", "malformed_model_output"), /wasn't usable sql/i, "malformed_output"],
     [
@@ -95,17 +95,17 @@ describe("Status pill reflects readiness and availability", () => {
   it("shows busy and saturated availability without blocking submission", async () => {
     const av = (state: "busy" | "saturated") => ({ state, running: 1, waiting: state === "busy" ? 0 : 2, max_concurrent: 1, max_waiting: 2 });
     const { unmount } = renderWorkspace(makeApi({ health: vi.fn().mockResolvedValue(health({ ready: true, availability: av("busy") })) }));
-    expect(await screen.findByRole("button", { name: /^model busy$/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^model server busy$/i })).toBeInTheDocument();
     unmount();
     renderWorkspace(makeApi({ health: vi.fn().mockResolvedValue(health({ ready: true, availability: av("saturated") })) }));
-    expect(await screen.findByRole("button", { name: /model saturated/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /model server saturated/i })).toBeInTheDocument();
   });
 
   it("lists artifact checks and availability in the popover, without paths", async () => {
     const { user } = renderWorkspace(
       makeApi({ health: vi.fn().mockResolvedValue(health({ ready: true, checks: { executable: true, base_gguf: true, lora_gguf: true }, availability: { state: "idle", running: 0, waiting: 0, max_concurrent: 1, max_waiting: 2 } })) }),
     );
-    await user.click(await screen.findByRole("button", { name: /local model ready/i }));
+    await user.click(await screen.findByRole("button", { name: /model server ready/i }));
     const panel = screen.getByRole("region", { name: /backend status details/i });
     expect(panel).toHaveTextContent(/executable ✓/);
     expect(panel).toHaveTextContent(/0\/1 running, 0\/2 waiting/);

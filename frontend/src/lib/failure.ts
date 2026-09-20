@@ -68,9 +68,9 @@ function fromResponse(r: QueryResponse): Failure {
           ...base,
           kind: "model_unavailable",
           tone: "warning",
-          title: "The local model isn't configured",
-          message: "The backend is running, but no model runtime is attached, so it can't generate SQL yet.",
-          hint: "Set the SCHEMAFORGE_* model paths and restart the backend (see docs/PHASE8.md).",
+          title: "The model server isn't configured",
+          message: "The backend is running, but no model server is attached, so it can't generate SQL yet.",
+          hint: "Set SCHEMAFORGE_LLAMA_SERVER_URL (persistent server) or the SCHEMAFORGE_* model paths, then restart the backend (see docs/PHASE11.md).",
           retryable: false,
         };
       }
@@ -79,9 +79,9 @@ function fromResponse(r: QueryResponse): Failure {
           ...base,
           kind: "model_busy",
           tone: "warning",
-          title: "The local model is busy",
+          title: "The model server is busy",
           message: "Another request is using the model right now, and the queue is full. Nothing was run against your database.",
-          hint: "Wait a few seconds and try again. One local model handles a limited number of requests at a time.",
+          hint: "Wait a few seconds and try again. The model server handles a limited number of requests at a time.",
           retryable: true,
         };
       }
@@ -91,8 +91,8 @@ function fromResponse(r: QueryResponse): Failure {
           kind: "model_timeout",
           tone: "warning",
           title: "The model took too long",
-          message: "Local inference hit the backend's generation time limit and was stopped. Your database was not touched.",
-          hint: "Try a shorter question, or retry when the machine is less busy.",
+          message: "Inference on the model server hit the backend's generation time limit and was stopped. Your database was not touched.",
+          hint: "Try a shorter question, or retry when the model server is less busy.",
           retryable: true,
         };
       }
@@ -112,7 +112,7 @@ function fromResponse(r: QueryResponse): Failure {
         kind: "model_error",
         tone: "danger",
         title: "The model couldn't produce SQL",
-        message: "Local inference failed before any SQL was generated. Your database was not touched.",
+        message: "Inference on the model server failed before any SQL was generated. Your database was not touched.",
         hint: "Try again. If it keeps failing, check the backend log for this request ID.",
         retryable: true,
       };
@@ -204,8 +204,8 @@ function fromError(e: ApiError): Failure {
         kind: "client_timeout",
         tone: "warning",
         title: "No answer within the wait limit",
-        message: "Local inference is taking longer than this page is willing to wait. The backend may still be working.",
-        hint: "Retry, or raise VITE_QUERY_TIMEOUT_MS for slower machines.",
+        message: "Inference on the model server is taking longer than this page is willing to wait. The backend may still be working.",
+        hint: "Retry, or raise VITE_QUERY_TIMEOUT_MS for slower (CPU) model hosts.",
         retryable: true,
       };
     case "aborted":

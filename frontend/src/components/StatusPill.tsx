@@ -1,5 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { HealthState } from "../state/useHealth";
+import { SERVING } from "../data/serving";
+import { inferenceLabel, runtimeLabel } from "../lib/modelMeta";
 import { Chevron, Refresh } from "./icons";
 
 interface Props {
@@ -14,9 +16,11 @@ function describe(state: HealthState): { tone: Tone; label: string } {
   if (state.status === "offline") return { tone: "down", label: "Backend offline" };
   const rt = state.health.model_runtime;
   if (!rt.configured) return { tone: "warn", label: "Model not configured" };
-  if (rt.ready === false) return { tone: "warn", label: "Model files missing" };
-  if (rt.availability && rt.availability.state !== "idle") return { tone: "warn", label: rt.availability.state === "saturated" ? "Model saturated" : "Model busy" };
-  return { tone: "ready", label: "Local model ready" };
+  if (rt.serving?.state === "loading") return { tone: "warn", label: "Model server loading" };
+  if (rt.serving?.state === "unreachable") return { tone: "warn", label: "Model server unreachable" };
+  if (rt.ready === false) return { tone: "warn", label: rt.runtime_mode === "persistent_server" ? "Model server not ready" : "Model files missing" };
+  if (rt.availability && rt.availability.state !== "idle") return { tone: "warn", label: rt.availability.state === "saturated" ? "Model server saturated" : "Model server busy" };
+  return { tone: "ready", label: `${SERVING.host} model server ready` };
 }
 
 /** Backend/model availability: a compact pill that opens a details popover. */
@@ -59,13 +63,23 @@ export function StatusPill({ state, onRefresh }: Props) {
             {rt && (
               <>
                 <div>
-                  <dt>Runtime</dt>
-                  <dd>{rt.runtime === "llama_cpp" ? "llama.cpp (CPU)" : rt.runtime}</dd>
+                  <dt>Hosting</dt>
+                  <dd>{SERVING.host} · {SERVING.api}</dd>
                 </div>
+                <div>
+                  <dt>Runtime</dt>
+                  <dd>{runtimeLabel(rt.runtime, rt.runtime_mode)}</dd>
+                </div>
+                {inferenceLabel(rt.n_gpu_layers) && (
+                  <div>
+                    <dt>Inference</dt>
+                    <dd>{inferenceLabel(rt.n_gpu_layers)}</dd>
+                  </div>
+                )}
                 {rt.deployment_mode && (
                   <div>
                     <dt>Deployment</dt>
-                    <dd>{rt.deployment_mode === "hot_lora" ? "Q4_K_M base + runtime LoRA" : rt.deployment_mode}</dd>
+                    <dd>{rt.deployment_mode === "hot_lora" ? `${SERVING.model.replace(" + LoRA", "")} · ${SERVING.quantization} base + runtime LoRA` : rt.deployment_mode}</dd>
                   </div>
                 )}
                 {rt.base_gguf && (

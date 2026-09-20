@@ -1,3 +1,4 @@
+import { SERVING } from "../data/serving";
 import { useElapsedSeconds } from "../lib/hooks";
 import { Close } from "./icons";
 
@@ -6,12 +7,12 @@ interface Props {
   onCancel: () => void;
 }
 
-const STEPS = ["Read the schema", "Generate SQL locally", "Check safety", "Run read-only"];
+const STEPS = ["Read the schema", "Generate SQL on the model server", "Check safety", "Run read-only"];
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 /**
- * Long-running local inference. There is no real progress signal, so this shows
+ * Long-running CPU inference on the remote model server. There is no real progress signal, so this shows
  * an indeterminate animation and a real elapsed clock, never a fake percentage.
  */
 export function LoadingPanel({ startedAt, onCancel }: Props) {
@@ -26,8 +27,8 @@ export function LoadingPanel({ startedAt, onCancel }: Props) {
       <div className="loading-copy">
         <h2>Forging your SQL…</h2>
         <p>
-          The model is running on your machine. Local CPU inference usually takes <strong>10–30 seconds</strong>. There's no live progress signal, so this shows elapsed time
-          rather than a percentage.
+          Qwen3-4B (Q4_K_M + LoRA) is generating SQL on the <strong>{SERVING.host}</strong> model server, a persistent llama.cpp runtime doing CPU inference. This typically takes
+          <strong>tens of seconds</strong>. There's no live progress signal, so this shows elapsed time rather than a percentage.
         </p>
         <div className="indeterminate" aria-hidden="true">
           <span />

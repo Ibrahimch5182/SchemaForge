@@ -55,8 +55,8 @@ export function Workspace({ navigate }: { navigate: (r: Route) => void }) {
     if (dbs.status === "loading") return "Loading databases…";
     if (dbs.status === "error") return "Databases are unavailable, so there's nothing to query yet.";
     if (!selectedId) return "Register a database on the backend to get started.";
-    if (health.status === "online" && !health.health.model_runtime.configured) return "The local model isn't configured on the backend yet.";
-    if (health.status === "online" && health.health.model_runtime.ready === false) return "Some model files aren't available on the backend right now.";
+    if (health.status === "online" && !health.health.model_runtime.configured) return "The model server isn't configured on the backend yet.";
+    if (health.status === "online" && health.health.model_runtime.ready === false) return health.health.model_runtime.runtime_mode === "persistent_server" ? "The model server isn't ready on the backend right now." : "Some model files aren't available on the backend right now.";
     return null;
   }, [dbs, selectedId, health]);
 

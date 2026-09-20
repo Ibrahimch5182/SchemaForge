@@ -7,7 +7,7 @@ export default function App() {
   const [route, navigate] = useRoute();
 
   useEffect(() => {
-    document.title = route === "workspace" ? "Workspace — SchemaForge" : "SchemaForge — Local Text-to-SQL";
+    document.title = route === "workspace" ? "Workspace — SchemaForge" : "SchemaForge — Text-to-SQL on AWS EC2";
   }, [route]);
 
   return (

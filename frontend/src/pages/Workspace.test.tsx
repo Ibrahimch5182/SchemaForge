@@ -33,7 +33,7 @@ describe("Workspace: loading databases and health", () => {
     await ready();
     expect(screen.getByRole("radio", { name: /demo/i })).toBeChecked();
     expect(screen.getByRole("radio", { name: /sales/i })).not.toBeChecked();
-    expect(await screen.findByRole("button", { name: /local model ready/i })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /model server ready/i })).toBeInTheDocument();
   });
 
   it("lets the user switch database", async () => {
@@ -64,7 +64,7 @@ describe("Workspace: loading databases and health", () => {
     await ready(makeApi({ health: vi.fn().mockResolvedValue(HEALTH_UNCONFIGURED) }));
     await screen.findByRole("button", { name: /model not configured/i });
     await waitFor(() => expect(screen.getByRole("button", { name: /run query/i })).toBeDisabled());
-    expect(screen.getByText(/local model isn't configured/i)).toBeInTheDocument();
+    expect(screen.getByText(/model server isn't configured/i)).toBeInTheDocument();
   });
 
   it("does not poll: health is requested once on mount", async () => {
@@ -137,7 +137,7 @@ describe("Workspace: running a query", () => {
 
     const status = await screen.findByRole("status", { name: /generating sql/i });
     expect(status).toHaveTextContent(/forging your sql/i);
-    expect(status).toHaveTextContent(/10–30 seconds/);
+    expect(status).toHaveTextContent(/tens of seconds/);
     expect(status).toHaveTextContent(/no live progress signal/i);
     expect(status.textContent).not.toMatch(/\d+\s?%/);
     expect(screen.getByLabelText(/your question/i)).toBeDisabled();

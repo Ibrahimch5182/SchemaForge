@@ -1,6 +1,7 @@
 import type { QueryResponse } from "../api/types";
 import { formatMs, formatRate, shortId } from "../lib/format";
-import { readModelMeta } from "../lib/modelMeta";
+import { SERVING } from "../data/serving";
+import { inferenceLabel, readModelMeta, runtimeLabel } from "../lib/modelMeta";
 import { CopyButton } from "./CopyButton";
 import { Clock, Cpu, Layers } from "./icons";
 
@@ -50,12 +51,22 @@ export function MetaStrip({ response }: { response: QueryResponse }) {
         <summary>Runtime details</summary>
         <dl className="meta-grid">
           <div>
-            <dt>Runtime</dt>
-            <dd>{m.runtime === "llama_cpp" ? "llama.cpp · CPU" : (m.runtime ?? "—")}</dd>
+            <dt>Hosting</dt>
+            <dd>{SERVING.host}</dd>
           </div>
           <div>
+            <dt>Runtime</dt>
+            <dd>{runtimeLabel(m.runtime, m.runtimeMode)}</dd>
+          </div>
+          {inferenceLabel(m.nGpuLayers) && (
+            <div>
+              <dt>Inference</dt>
+              <dd>{inferenceLabel(m.nGpuLayers)}</dd>
+            </div>
+          )}
+          <div>
             <dt>Deployment</dt>
-            <dd>{m.deploymentMode === "hot_lora" ? "Q4_K_M base + runtime LoRA" : (m.deploymentMode ?? "—")}</dd>
+            <dd>{m.deploymentMode === "hot_lora" ? `${SERVING.model} · ${SERVING.quantization} base + runtime LoRA` : (m.deploymentMode ?? "—")}</dd>
           </div>
           {m.baseGguf && (
             <div>
