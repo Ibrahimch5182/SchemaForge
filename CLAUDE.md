@@ -42,19 +42,23 @@ the full chronological
 engineering journal. Do not implement later phases unless explicitly
 asked.
 
-**Phase 11 (persistent serving / deployment readiness) is IMPLEMENTED at
-the implementation gate only.** `localsql.backend.server_runtime.LlamaServerRuntime`
-serves the frozen Q4_K_M + hot LoRA through a persistent private `llama-server`
+**Phase 11 (persistent serving / deployment) is COMPLETE: both the local
+implementation gate and the real remote production gate PASSED** (2026-09-19,
+commit `d51d36a`). `localsql.backend.server_runtime.LlamaServerRuntime` serves
+the frozen Q4_K_M + hot LoRA through a persistent private `llama-server`
 (`SCHEMAFORGE_RUNTIME_KIND=llama_server`); the Phase 8 subprocess runtime stays
-the development/fallback default. Docker/Compose (`docker/`, `docker-compose*.yml`,
-`deploy/`), production CORS/rate-limit/body-limit, Vercel config and an AWS
-runbook exist (`docs/PHASE11.md`). Local `scripts/canary_phase11.py` PASSED.
-**The overall Phase 11 gate is manual and NOT done**: real Vercel -> public HTTPS
-AWS backend -> persistent model server -> real query, from another device, then
-terminate all AWS resources. Never create AWS resources or use AWS credentials
-automatically; the cloud proof must cost $0 and CPU serving must stay supported
-(GPU is optional). Set `LLAMA_THREADS` to the host's physical cores/vCPUs -- the
-default `-t -1` was measured 30x slower on a shared/SMT host.
+the development/fallback default. Proven path: Vercel frontend -> public HTTPS
+AWS EC2 (Caddy) -> FastAPI -> private llama.cpp server, CPU-only, verified from
+an iPhone on LTE. The AWS proof host was ephemeral and was terminated after
+evidence capture; its `sslip.io` hostname is RETIRED. Evidence:
+`docs/evidence/phase11-production-proof.md`; runbook/limitations:
+`docs/PHASE11.md`. The single observed request (16.0 s, 3.4 tok/s) is NOT a
+benchmark and must never be presented as one; deployment validation is kept
+separate from research results. Never create AWS resources or use AWS
+credentials automatically; any redeploy must stay $0-out-of-pocket and CPU
+serving must stay supported (GPU is optional). Set `LLAMA_THREADS` to the
+host's physical cores/vCPUs (default `-t -1` measured 30x slower on a
+shared/SMT host). `.artifacts/` (raw evidence, models) stays git-ignored.
 
 ## Architecture (see `docs/ARCHITECTURE.md`, `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md`, `docs/BASELINE.md`, `docs/TRAINING.md`, `docs/CONTEXT_BUDGET.md`)
 
@@ -216,7 +220,8 @@ uv run pytest -q
 - `docs/PHASE11.md` -- Phase 11: persistent llama.cpp serving
   (`localsql.backend.server_runtime`), prompt parity, Docker/Compose, public
   networking (CORS/rate limit), AWS zero-cost runbook, Vercel, serving canary
-  (`scripts/canary_phase11.py`); manual cloud gate still open.
+  (`scripts/canary_phase11.py`); remote gate passed;
+  evidence in `docs/evidence/phase11-production-proof.md`.
 - `docs/ARCHITECTURE.md` -- full future architecture (app/production not
   yet built).
 - `configs/data.yaml` -- Phase 1 pipeline constants.

@@ -1,6 +1,6 @@
-# LocalSQL
+# SchemaForge (LocalSQL)
 
-LocalSQL is a capstone project exploring whether a compact, open-weight LLM
+SchemaForge (repository/package name `localsql`) is a capstone project exploring whether a compact, open-weight LLM
 can be fine-tuned (QLoRA) into a reliable, schema-generalizing Text-to-SQL
 model: given a natural-language question, a relational database schema, and
 optional business context, produce one executable, read-only SQL query.
@@ -13,8 +13,52 @@ it never saw during training** -- and does giving it optional business
 context (vs. schema alone) meaningfully change accuracy? Answering this
 requires a training-data pipeline that splits by database (not by example)
 and treats business context as something to sometimes withhold, not always
-provide. This repository has not yet trained or evaluated a model, so no
-accuracy numbers exist yet.
+provide. Measured results are documented per phase and are not restated in
+this README: the untouched-baseline result is in `docs/BASELINE.md`, the
+fine-tuning/evaluation journal is `PROJECT.md`, and quantization/deployment
+measurements are in `docs/PHASE7.md`.
+
+## End-to-end scope and production deployment
+
+This is a full model-engineering pipeline, not just a UI over an API:
+
+```text
+BIRD data -> QLoRA fine-tune (open-weight Qwen3-4B) -> benchmark evaluation
+  -> GGUF Q4_K_M quantization -> persistent llama.cpp serving
+  -> deterministic SQL safety + preflight + read-only execution
+  -> Docker -> AWS EC2 (HTTPS) -> Vercel frontend
+```
+
+**Phase 11 proved the whole stack on real public infrastructure** (2026-09-19):
+
+- **Model:** open-weight `Qwen3-4B-Instruct-2507`, QLoRA-specialized (checkpoint-1518), served as
+  a Q4_K_M base + hot-loaded F16 LoRA (~2.39 GB effective) by a **persistent, private llama.cpp
+  server** -- loaded once, not per request.
+- **Safety:** every generated statement passes a deterministic AST safety policy and a
+  database-aware preflight, then runs on an independent **read-only** SQLite executor.
+- **Deployment:** Docker Compose on one AWS EC2 host (`m7i-flex.large`, 2 vCPU, 8 GiB, **CPU-only**):
+  Caddy (automatic HTTPS) -> FastAPI -> private llama.cpp server. Only application ports 80/443 were internet-facing (SSH 22 was
+  restricted to the operator's IP), the model server is on an internal Docker network, CORS is an exact-origin allow-list, and model
+  artifacts are mounted read-only and SHA-256 verified.
+- **Frontend:** static Vite SPA on Vercel calling the HTTPS backend.
+- **External validation:** an iPhone on **LTE with Wi-Fi off** ran a real natural-language query
+  end to end and got the correct result from the read-only demo database.
+
+<p align="center">
+  <img src="docs/assets/phase11/mobile-query-result-625000.png" alt="SchemaForge on an iPhone over LTE: generated SQL, safety and read-only badges, result 625,000" width="280">
+</p>
+
+<sub>Real screenshot from the proof (single request: 16.0 s, 3.4 tok/s on 2 vCPU -- an observation, **not a benchmark**).</sub>
+
+**Honest framing.** The AWS host was an **ephemeral proof deployment**: the EC2 instance was terminated after the
+final evidence was captured and is not running now. The static Vercel frontend may remain deployed but cannot serve queries without a recreated backend. The `98-93-31-228.sslip.io` backend name in the
+evidence is **retired**. The system can be recreated from the checked-in runbook. The deterministic
+checks establish that SQL is safe, valid and read-only -- **not** that it answers the question
+correctly; confidence is intentionally not claimed. V1 is SQLite-first with one demo database.
+Deployment validation is kept separate from the research benchmarks above.
+
+- Evidence record: [`docs/evidence/phase11-production-proof.md`](docs/evidence/phase11-production-proof.md)
+- Architecture, security controls, runbook, limitations: [`docs/PHASE11.md`](docs/PHASE11.md)
 
 ## Architecture (high level)
 
@@ -30,13 +74,24 @@ the training-data pipeline, `docs/EVALUATION.md` for the benchmark,
 QLoRA smoke test. `PROJECT.md` is the full chronological engineering
 journal.
 
-## Current phase: Phase 4 COMPLETE -- QLoRA smoke test succeeded
+## Status: Phases 1-11 complete
 
-Phases 1-4 are complete. Phase 3's real Kaggle baseline: official EX 43.6,
-Soft-F1 47.6975. Phase 4's real Kaggle QLoRA smoke test: 20/20 steps,
-final loss 0.410, adapter saved and reload-verified. **The Phase 5
-context-length/schema strategy remains an explicit open decision** --
-neither 4096 nor 8192 is approved for full training (see `PROJECT.md`).
+| Phase | Scope | Where |
+|---|---|---|
+| 1-2 | Reproducible BIRD training-data pipeline; locked BIRD Mini-Dev evaluation system | `docs/DATA_CONTRACT.md`, `docs/EVALUATION.md` |
+| 3 | Untouched-baseline inference (real Kaggle result: official EX 43.6, Soft-F1 47.6975) | `docs/BASELINE.md` |
+| 4 | QLoRA smoke test (details below) | `docs/TRAINING.md` |
+| 5-6 | Schema-context strategy, full QLoRA training (checkpoint-1518), fine-tuned evaluation | `PROJECT.md`, `docs/CONTEXT_BUDGET.md` |
+| 7 | GGUF Q4_K_M quantization + local llama.cpp inference | `docs/PHASE7.md` |
+| 8-10 | Production backend, product frontend, reliability/hardening | `docs/PHASE8.md`, `docs/PHASE9.md`, `docs/PHASE10.md` |
+| 11 | Persistent serving, Docker, real AWS + Vercel deployment proof | `docs/PHASE11.md`, `docs/evidence/phase11-production-proof.md` |
+
+The sections below are the original Phase 1-4 detail, kept as written (a historical snapshot;
+`PROJECT.md` is the authoritative journal for later phases).
+
+Phase 3's real Kaggle baseline: official EX 43.6, Soft-F1 47.6975. Phase 4's
+real Kaggle QLoRA smoke test: 20/20 steps, final loss 0.410, adapter saved
+and reload-verified.
 
 **Phase 1 -- reproducible training-data pipeline**
 - Loads the real `birdsql/bird23-train-filtered` dataset (6,601 rows / 69
@@ -89,7 +144,7 @@ neither 4096 nor 8192 is approved for full training (see `PROJECT.md`).
   databases. **Neither limit is approved for Phase 5 full training** --
   the context-length/schema strategy is an explicit open decision.
 
-No actual training run or application code exists yet.
+*(Phase 1-4 snapshot ends here; later phases are summarized in the status table above.)*
 
 ## Setup
 
@@ -123,6 +178,17 @@ uv run python scripts/run_qlora_smoke.py --run-id qlora-smoke-check --dry-run --
 uv run pytest -q
 ```
 
+## Running the production stack
+
+```bash
+cp deploy/production.env.example .env     # set domain, exact CORS origin, model dir, LLAMA_THREADS
+docker compose up -d --build              # Caddy + FastAPI + private llama.cpp server (CPU by default)
+bash deploy/aws/verify_stack.sh https://<your-domain>
+```
+
+Model files are supplied by mounted volume, never by Git or the image. Full procedure, sizing,
+security group, teardown: [`docs/PHASE11.md`](docs/PHASE11.md#7-deployment-runbook-as-actually-performed).
+
 ## Project layout
 
 ```text
@@ -145,6 +211,12 @@ scripts/                  inspect_bird.py, prepare_bird.py,
                            run_baseline.py, run_qlora_smoke.py
 tests/                    Unit + fixture-based tests
 docs/                     ARCHITECTURE.md, DATA_CONTRACT.md, EVALUATION.md,
-                           BASELINE.md, TRAINING.md
+                           BASELINE.md, TRAINING.md, PHASE7-11.md,
+                           evidence/ (Phase 11 production proof), assets/
+src/localsql/backend/     Phases 8-11: QueryService, safety, preflight, read-only
+                           executor, FastAPI, persistent llama.cpp runtime
+frontend/                 Phase 9: Vite + React SPA (deployed on Vercel)
+docker/, deploy/          Phase 11: Dockerfiles, Caddyfile, env template, EC2 scripts
+docker-compose*.yml       Phase 11: production stack, local and optional GPU overlays
 data/                     raw/ processed/ benchmarks/ runs/ (gitignored)
 ```

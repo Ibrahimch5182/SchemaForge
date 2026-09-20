@@ -1,5 +1,10 @@
 # LocalSQL Architecture (High Level)
 
+> **Update:** this document is the original high-level plan and its phase-status text below is a
+> historical snapshot. Phases 1-11 are complete; the deployed serving/security architecture (with
+> diagram) is in [`PHASE11.md`](PHASE11.md) and the production proof is in
+> [`evidence/phase11-production-proof.md`](evidence/phase11-production-proof.md).
+
 This document describes the intended end-to-end architecture across all
 phases. **Phases 1-4 are complete** (Phase 3's real Kaggle baseline:
 official EX 43.6, Soft-F1 47.6975; Phase 4's real Kaggle QLoRA smoke test:
